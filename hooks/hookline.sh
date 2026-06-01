@@ -83,8 +83,24 @@ jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask"
 # 3. Now do the async work: send notification + listen for phone + inject keystroke
 # This runs in background AFTER the hook has already output its decision
 TOPIC="${HOOKLINE_TOPIC:?hookline: HOOKLINE_TOPIC not set in config}"
+NTFY_SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
 RESPONSE_TOPIC="${TOPIC}-response"
-PHONE_TIMEOUT="60"  # Initial notification timeout (60s production)
+PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-60}"
+GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
+
+# Build human-readable notification message (instead of raw JSON blob)
+if [ "$TOOL_NAME" = "Bash" ]; then
+  _cmd=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
+  NOTIFY_MSG="$ ${_cmd:0:280}"
+elif [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Edit" ]; then
+  _path=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
+  NOTIFY_MSG="${TOOL_NAME}: $_path"
+elif [ "$TOOL_NAME" = "NotebookEdit" ]; then
+  _path=$(echo "$INPUT" | jq -r '.tool_input.path // ""' 2>/dev/null)
+  NOTIFY_MSG="NotebookEdit: $_path"
+else
+  NOTIFY_MSG="${TOOL_INPUT:0:300}"
+fi
 
 # Transcript line count is captured AFTER 1s buffer (inside background) to let
 # Claude Code finish writing the tool_use line before we baseline.
@@ -97,17 +113,17 @@ PHONE_TIMEOUT="60"  # Initial notification timeout (60s production)
       -d "$(jq -nc \
         --arg topic "$TOPIC" \
         --arg title "[$PROJECT] $TOOL_NAME" \
-        --arg message "$TOOL_INPUT" \
-        --arg url "https://ntfy.sh/${RESPONSE_TOPIC}" \
+        --arg message "$NOTIFY_MSG" \
+        --arg url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
         '{
           topic: $topic, title: $title, message: $message,
           priority: 4, tags: ["lock"],
           actions: [
             {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'$REQ_ID'"},
             {action:"http",label:"Always",url:$url,method:"POST",body:"always|'$REQ_ID'"},
-            {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'$REQ_ID'"}
+            {action:"http",label:"Deny",url:$url,method:"POST",body:"deny|'$REQ_ID'"}
           ]
-        }')" "https://ntfy.sh/" > /tmp/ntfy-response-$REQ_ID.json 2>&1
+        }')" "${NTFY_SERVER}/" > /tmp/ntfy-response-$REQ_ID.json 2>&1
     response_id=$(cat /tmp/ntfy-response-$REQ_ID.json 2>/dev/null | jq -r '.id // "NO_ID"')
     log "notification sent, response id: $response_id"
 
@@ -120,7 +136,7 @@ PHONE_TIMEOUT="60"  # Initial notification timeout (60s production)
       elapsed=$((elapsed + 3))
       # Poll for new messages since the notification was sent
       msgs=$(curl -s --max-time 5 \
-        "https://ntfy.sh/${RESPONSE_TOPIC}/json?poll=1&since=${since_id}" 2>/dev/null)
+        "${NTFY_SERVER}/${RESPONSE_TOPIC}/json?poll=1&since=${since_id}" 2>/dev/null)
       while IFS= read -r msg; do
         [ -z "$msg" ] && continue
         msg_id=$(echo "$msg" | jq -r '.id // empty' 2>/dev/null)
@@ -178,8 +194,8 @@ PHONE_TIMEOUT="60"  # Initial notification timeout (60s production)
   # then 20s grace period, then send notification.
   sleep 1
   INITIAL_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
-  log "background: baseline transcript lines: $INITIAL_LINES, starting 20s grace period..."
-  sleep 20
+  log "background: baseline transcript lines: $INITIAL_LINES, starting ${GRACE_PERIOD}s grace period..."
+  sleep "$GRACE_PERIOD"
 
   CURRENT_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
   if [ "$CURRENT_LINES" -gt "$INITIAL_LINES" ]; then
@@ -188,22 +204,12 @@ PHONE_TIMEOUT="60"  # Initial notification timeout (60s production)
   fi
   log "background: no new transcript lines, user likely away - sending notification"
 
-  # Send notification and retry loop (retries are instant, no grace period)
-  while true; do
-    if send_initial_notification; then
-      if [ "$DECISION" = "retry" ]; then
-        log "background: user tapped Retry, resending immediately"
-        # Loop continues, no 20s delay on retry
-      else
-        handle_decision "$DECISION"
-        break
-      fi
-    else
-      # Timeout - just exit, no missed notification
-      log "background: notification timed out, exiting"
-      break
-    fi
-  done
+  # Send notification and wait for response
+  if send_initial_notification; then
+    handle_decision "$DECISION"
+  else
+    log "background: notification timed out, exiting"
+  fi
 ) &>/dev/null &
 
 log "=== hook complete ==="

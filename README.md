@@ -55,7 +55,7 @@ Use Claude Code normally. When a permission prompt fires:
 |--------|--------|
 | **Allow** | Approves this one request; terminal prompt auto-dismisses |
 | **Always** | Approves + saves pattern to project allowlist (no more prompts for this tool/command) |
-| **Retry** | Resends the notification immediately (useful if it got buried) |
+| **Deny** | Rejects the request; terminal prompt auto-dismisses with denial |
 
 ### Auto-approved commands
 

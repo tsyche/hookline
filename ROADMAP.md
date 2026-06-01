@@ -1,37 +1,23 @@
 # hookline Roadmap
 
-## v1.0 — Current (stable)
+## v1.1 — Current (stable)
 
 - [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit
 - [x] Instant terminal prompt — no delay for local users
 - [x] Transcript line-count detection for reliable local-answer detection
-- [x] 20-second grace period: local answers suppress phone notification
-- [x] ntfy.sh phone notifications with **Allow / Always / Retry** buttons
+- [x] Configurable grace period and phone timeout via `HOOKLINE_GRACE_PERIOD` / `HOOKLINE_PHONE_TIMEOUT`
+- [x] ntfy.sh phone notifications with **Allow / Always / Deny** buttons
+- [x] Human-readable notification messages (file paths, commands — not raw JSON)
 - [x] Keystroke injection to auto-dismiss terminal prompt when phone responds
 - [x] **Always Allow** saves pattern to project `settings.local.json` allowlist
 - [x] Built-in safe-command prefix auto-approval (echo, grep, cat, ls, etc.)
-- [x] Retry button resends notification immediately (no additional grace period)
 - [x] Polling-based phone response (avoids ntfy SSE rate limits)
+- [x] Self-hosted ntfy support via `HOOKLINE_NTFY_SERVER`
 - [x] Install / uninstall / test scripts
 
-## v1.1 — Near-term
+## v1.2 — Near-term
 
-1. **Wire up config variables** (~30 min)
-   - Hook currently hardcodes `sleep 20` and `PHONE_TIMEOUT=60`; `install.sh` already writes `HOOKLINE_GRACE_PERIOD` and `HOOKLINE_PHONE_TIMEOUT` to config but hook ignores them
-   - Fix: read those vars in the hook; fall back to defaults if unset
-   - Almost done — just needs 2 lines changed
-
-2. **Notification content formatting** (~1–2h)
-   - Phone currently shows raw JSON: `{"file_path":"/path","content":"..."}`
-   - Extract and display human-readable fields: file path for Write/Edit, command for Bash
-   - Truncate long values cleanly; strip newlines and control chars
-
-3. **Deny via notification body tap** (~1h)
-   - ntfy supports a `click` action that fires when the user taps the notification body (not a button)
-   - Use this as Deny — keeps the 3 action buttons as Allow/Always/Retry
-   - No button layout changes needed
-
-4. **AskUserQuestion hook** (~3–4h)
+1. **AskUserQuestion hook** (~3–4h)
    - Route Claude's interactive questions to phone with multi-button answers
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
@@ -46,18 +32,18 @@
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-## v1.2 — Medium-term
+## v1.3 — Medium-term
 
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
-- **Multi-session keystroke injection** — map session IDs to iTerm2 tab/session identifiers via AppleScript; inject into the correct window even when not in focus (see [design notes](#multi-session-design))
+- **hookline daemon + TTY-agnostic injection** — replace per-invocation osascript with a small always-running daemon that maintains a session registry (session ID → TTY/method) and routes phone responses to the correct session using the best available injection method: `tmux send-keys` if in tmux, terminal-specific AppleScript otherwise, with `TIOCSTI` TTY injection as a future option (currently restricted on macOS 12+); solves both multi-session and terminal portability in one architectural move (see [design notes](#multi-session-design))
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 
-## v1.3 — Future
+## v1.4 — Future
 
-- **Terminal emulator portability** — support Terminal.app, Warp, Kitty, Ghostty (detect via `$TERM_PROGRAM`)
+- **Terminal emulator portability** — support Terminal.app, Warp, Kitty, Ghostty (detect via `$TERM_PROGRAM`); handled as part of the daemon work above
 - **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
 - **Notification content control** — configurable truncation; redact sensitive path segments
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
@@ -67,13 +53,21 @@
 
 ---
 
-## Multi-session Design
+## Multi-session & Terminal-agnostic Design
 
-Keystroke injection currently targets whatever iTerm2 window/tab is in focus. This works for single-session use but breaks when multiple Claude Code tabs are open simultaneously.
+Keystroke injection currently targets whatever iTerm2 window is in focus, which breaks with multiple Claude Code sessions open simultaneously and doesn't work in other terminal emulators.
 
-Proposed approach:
-- At hook fire time, capture the Claude Code process's controlling TTY from the hook's `session_id` and process tree
-- Map session IDs to iTerm2 tab/session identifiers via AppleScript introspection
-- Inject keystrokes directly to the matched session regardless of focus
+**Proposed architecture: hookline daemon**
 
-Tracked as a future feature — contributions welcome.
+A small always-running background agent that:
+1. Listens on a Unix socket (`~/.local/share/hookline/daemon.sock`)
+2. On hook fire, registers `session_id → TTY + environment` (captured from hook input)
+3. Phone listener sends decision to daemon socket instead of doing osascript inline
+4. Daemon looks up the session and injects using the best available method:
+   - `$TMUX` set → `tmux send-keys -t <pane>` (focus-independent, terminal-agnostic)
+   - `$TERM_PROGRAM=iTerm.app` → AppleScript targeting specific session by TTY
+   - `$TERM_PROGRAM=WezTerm|Ghostty|...` → terminal-specific APIs
+   - Linux → `xdotool type` targeting window by PID
+   - Last resort → `TIOCSTI` TTY ioctl (restricted on macOS 12+, requires entitlement)
+
+This solves multi-session and terminal portability in one move. tmux users get it for free immediately; non-tmux users get best-effort per terminal emulator.
