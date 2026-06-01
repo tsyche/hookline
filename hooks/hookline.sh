@@ -120,8 +120,8 @@ fi
           priority: 4, tags: ["lock"],
           actions: [
             {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'$REQ_ID'"},
-            {action:"http",label:"Always",url:$url,method:"POST",body:"always|'$REQ_ID'"},
-            {action:"http",label:"Deny",url:$url,method:"POST",body:"deny|'$REQ_ID'"}
+            {action:"http",label:"Deny",url:$url,method:"POST",body:"deny|'$REQ_ID'"},
+            {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'$REQ_ID'"}
           ]
         }')" "${NTFY_SERVER}/" > /tmp/ntfy-response-$REQ_ID.json 2>&1
     response_id=$(cat /tmp/ntfy-response-$REQ_ID.json 2>/dev/null | jq -r '.id // "NO_ID"')
@@ -153,35 +153,10 @@ fi
     return 1  # Timeout (no response)
   }
 
-  # Handle decision (allow/deny/always)
+  # Handle decision (allow/deny)
   handle_decision() {
     local decision="$1"
-
-    if [ "$decision" = "allow" ] || [ "$decision" = "always" ]; then
-      # For "always", also save pattern to allowlist
-      if [ "$decision" = "always" ]; then
-        # Generate pattern: for Bash, use command; for other tools, use wildcard
-        if [ "$TOOL_NAME" = "Bash" ]; then
-          cmd=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
-          [ -z "$cmd" ] && cmd="$TOOL_INPUT"
-          cmd_word=$(echo "$cmd" | awk '{print $1}' 2>/dev/null | head -c 50)
-          pattern="$TOOL_NAME($cmd_word *)"
-        else
-          pattern="$TOOL_NAME(*)"
-        fi
-
-        log "background: saving pattern: $pattern"
-
-        # Ensure settings file exists
-        [ ! -f "$SETTINGS_LOCAL" ] && echo '{}' > "$SETTINGS_LOCAL"
-
-        # Append pattern to allowlist (initialize paths if needed)
-        jq --arg p "$pattern" '.permissions //= {} | .permissions.allow //= [] | .permissions.allow += [$p]' "$SETTINGS_LOCAL" > "$SETTINGS_LOCAL.tmp" && \
-        mv "$SETTINGS_LOCAL.tmp" "$SETTINGS_LOCAL"
-
-        log "background: pattern saved to allowlist"
-      fi
-
+    if [ "$decision" = "allow" ]; then
       log "background: injecting keystroke '1' + Enter (Allow)"
       osascript -e "tell application \"System Events\" to tell process \"iTerm2\" to keystroke \"1\"" -e "tell application \"System Events\" to key code 36" 2>/dev/null
     elif [ "$decision" = "deny" ]; then
@@ -204,12 +179,19 @@ fi
   fi
   log "background: no new transcript lines, user likely away - sending notification"
 
-  # Send notification and wait for response
-  if send_initial_notification; then
-    handle_decision "$DECISION"
-  else
-    log "background: notification timed out, exiting"
-  fi
+  # Send notification; loop on timeout or manual Retry tap
+  while true; do
+    if send_initial_notification; then
+      if [ "$DECISION" = "retry" ]; then
+        log "background: user tapped Retry, resending..."
+      else
+        handle_decision "$DECISION"
+        break
+      fi
+    else
+      log "background: notification timed out, resending..."
+    fi
+  done
 ) &>/dev/null &
 
 log "=== hook complete ==="

@@ -54,8 +54,8 @@ Use Claude Code normally. When a permission prompt fires:
 | Button | Action |
 |--------|--------|
 | **Allow** | Approves this one request; terminal prompt auto-dismisses |
-| **Always** | Approves + saves pattern to project allowlist (no more prompts for this tool/command) |
 | **Deny** | Rejects the request; terminal prompt auto-dismisses with denial |
+| **Retry** | Resends a fresh notification (useful when you see an old one an hour later) |
 
 ### Auto-approved commands
 
@@ -63,7 +63,7 @@ The following Bash command prefixes are automatically approved without any promp
 
 `echo`, `stat`, `ls`, `pwd`, `cat`, `grep`, `find`, `date`, `whoami`, `hostname`, `uname`, `which`, `type`, `file`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`
 
-Patterns saved via **Always** are also auto-approved on future invocations.
+To permanently allow a tool/command, answer **Yes** at the terminal prompt and select the "Always allow" option. Patterns persist to `settings.local.json` and are auto-approved on future invocations without prompting.
 
 ## Configuration
 

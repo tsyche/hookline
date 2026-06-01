@@ -1,16 +1,29 @@
 # hookline Roadmap
 
+## Goals
+
+hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account. Every feature beyond that is an opt-in upgrade — not a requirement.
+
+**Notification transport tiers (all first-class, user's choice):**
+- **ntfy.sh public** — zero friction, works immediately, free; rate limits only a concern for very heavy use
+- **Self-hosted ntfy** — full control, no rate limits, ~$5/mo VPS or existing server; recommended for daily drivers
+- **Direct / relay-free** — Tailscale or VPN; no third-party services at all; advanced but genuinely accessible via the setup wizard
+- **Pluggable backends** — Gotify, Telegram, Pushover, or custom; for users who already have preferred infrastructure
+
+The setup wizard is what makes all tiers accessible. It should ask the right questions, explain tradeoffs plainly, and handle configuration — no manual file editing required.
+
 ## v1.1 — Current (stable)
 
 - [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit
 - [x] Instant terminal prompt — no delay for local users
 - [x] Transcript line-count detection for reliable local-answer detection
 - [x] Configurable grace period and phone timeout via `HOOKLINE_GRACE_PERIOD` / `HOOKLINE_PHONE_TIMEOUT`
-- [x] ntfy.sh phone notifications with **Allow / Always / Deny** buttons
+- [x] ntfy.sh phone notifications with **Allow / Deny / Retry** buttons
 - [x] Human-readable notification messages (file paths, commands — not raw JSON)
 - [x] Keystroke injection to auto-dismiss terminal prompt when phone responds
-- [x] **Always Allow** saves pattern to project `settings.local.json` allowlist
+- [x] **Always Allow** from terminal saves pattern to project `settings.local.json` allowlist
 - [x] Built-in safe-command prefix auto-approval (echo, grep, cat, ls, etc.)
+- [x] Auto-retry on notification timeout (keeps resending until you respond)
 - [x] Polling-based phone response (avoids ntfy SSE rate limits)
 - [x] Self-hosted ntfy support via `HOOKLINE_NTFY_SERVER`
 - [x] Install / uninstall / test scripts
@@ -22,10 +35,14 @@
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
 
-5. **Self-hosted ntfy auth** (~1h)
-   - Add `HOOKLINE_NTFY_USERNAME` / `HOOKLINE_NTFY_PASSWORD` to config
-   - Pass as Basic Auth header on all curl calls
-   - Required for private ntfy deployments
+5. **Setup wizard** (~2–3h)
+   - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
+   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy → direct via Tailscale
+   - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
+   - For self-hosted ntfy: prompt for server URL + optional auth credentials; output a ready-to-use `docker-compose.yml`
+   - For Tailscale: detect Tailscale IP automatically, configure daemon HTTP server, output phone polling URL
+   - All paths end with a live test notification so user knows it works before they walk away
+   - Reruns cleanly to switch transports later
 
 6. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
@@ -43,12 +60,14 @@
 
 ## v1.4 — Future
 
+- **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify (open source, self-hostable, ntfy-compatible API), Telegram bot (free, no rate limits, action buttons), and Pushover; community can add others without touching core
+- **Direct mode via Tailscale / VPN** — run a tiny local HTTP server on the Mac; phone polls it directly over Tailscale IP or VPN — zero relay dependency, no third-party service involved; ideal endgame for users already on Tailscale
+- **hookline relay (self-hostable)** — ship a minimal relay server component (single binary or Docker image) as a fully independent ntfy replacement; deploy on any VPS; uses same poll-based protocol as current ntfy integration
 - **Terminal emulator portability** — support Terminal.app, Warp, Kitty, Ghostty (detect via `$TERM_PROGRAM`); handled as part of the daemon work above
 - **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
 - **Notification content control** — configurable truncation; redact sensitive path segments
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
 - **Always-deny patterns** — companion to allowlist for commands that should always be blocked
-- **QR code setup** — print ntfy topic URL as QR code during install for easy phone subscription (requires `qrencode`)
 - **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
 
 ---
@@ -71,3 +90,25 @@ A small always-running background agent that:
    - Last resort → `TIOCSTI` TTY ioctl (restricted on macOS 12+, requires entitlement)
 
 This solves multi-session and terminal portability in one move. tmux users get it for free immediately; non-tmux users get best-effort per terminal emulator.
+
+## Relay-free Design (Tailscale / VPN Direct Mode)
+
+Currently hookline requires a relay because the phone and Mac aren't directly reachable from each other over the internet. With Tailscale (free, easy to set up on any device) or a VPN, they share a private network and can talk directly — no relay needed.
+
+**Why this is accessible to anyone:** Tailscale has a generous free tier, runs on iOS/Android/macOS/Linux, and takes ~5 minutes to set up. The setup wizard handles detection and configuration. Users don't need to understand networking.
+
+**Proposed architecture:**
+
+The hookline daemon (see above) also exposes a small HTTP server on a configurable port (default `7676`). When direct mode is configured, it binds to the Tailscale or VPN interface IP.
+
+- Hook fires → daemon registers the pending approval at `GET /pending`
+- Phone polls `http://<device-ip>:7676/pending` every few seconds
+- Phone approves via `POST /respond` with decision
+- Daemon receives response and injects keystroke as usual
+
+The companion mobile interface could be:
+- A minimal PWA served from the daemon itself (no app store, works in any mobile browser)
+- An iOS/Android Shortcut that polls the endpoint
+- Eventually a dedicated companion app
+
+No third-party services, no rate limits, no single point of failure. The daemon architecture makes this a natural extension — the same daemon handles both relay and direct modes, switching based on config.
