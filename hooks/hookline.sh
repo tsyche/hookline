@@ -205,24 +205,24 @@ fi
   log "background: no new transcript lines, user likely away - sending notification"
 
   # Send notification; loop on timeout (max 5 auto-retries) or manual Retry tap
-  MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-5}"
+  MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-2}"
   retries=0
   while true; do
     if send_initial_notification; then
       if [ "$DECISION" = "retry" ]; then
-        log "background: user tapped Retry, resending..."
-        retries=0  # manual retry resets the auto-retry counter
+        retries=$((retries + 1))
+        if [ "$retries" -ge "$MAX_RETRIES" ]; then
+          log "background: max retries ($MAX_RETRIES) reached, giving up"
+          break
+        fi
+        log "background: user tapped Retry, resending (attempt $retries/$MAX_RETRIES)..."
       else
         handle_decision "$DECISION"
         break
       fi
     else
-      retries=$((retries + 1))
-      if [ "$retries" -ge "$MAX_RETRIES" ]; then
-        log "background: max retries ($MAX_RETRIES) reached, giving up"
-        break
-      fi
-      log "background: notification timed out, resending (attempt $retries/$MAX_RETRIES)..."
+      log "background: notification timed out, giving up"
+      break
     fi
   done
 ) &>/dev/null &
