@@ -12,7 +12,7 @@ Claude Code triggers PreToolUse hook
   → 20-second grace period starts
     ├── Answered at terminal? → phone stays quiet
     └── No answer? → ntfy.sh notification sent to phone
-          → Tap Allow / Always / Retry
+          → Tap Allow / Deny / Retry
             → Keystroke injected → terminal prompt dismissed
 ```
 

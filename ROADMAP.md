@@ -30,24 +30,38 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## v1.2 — Near-term
 
-1. **AskUserQuestion hook** (~3–4h)
+1. **ntfy Basic Auth** (~30 min)
+   - Wire `HOOKLINE_NTFY_USERNAME` / `HOOKLINE_NTFY_PASSWORD` (already written to config by installer) into all curl calls as Basic Auth headers
+   - Required before self-hosted ntfy path in the setup wizard is fully functional
+   - Quick prerequisite that unblocks item 2
+
+2. **Setup wizard** (~2–3h)
+   - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
+   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy (requires item 1) → direct/Tailscale (requires daemon, v1.3)
+   - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
+   - For self-hosted ntfy: prompt for server URL + auth credentials; output a ready-to-use `docker-compose.yml`
+   - All paths end with a live test notification so user knows it works before they walk away
+   - Reruns cleanly to switch transports later; Tailscale path added once daemon ships
+
+3. **`hookline status` command** (~1h)
+   - Show current config (topic, server, grace period, timeouts), hook registration status, and last 10 log lines
+   - Test connectivity with a dry-run ping to ntfy server
+   - First thing any user runs when something isn't working; saves support burden for a FOSS project
+
+4. **AskUserQuestion hook** (~3–4h)
    - Route Claude's interactive questions to phone with multi-button answers
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
 
-5. **Setup wizard** (~2–3h)
-   - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
-   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy → direct via Tailscale
-   - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
-   - For self-hosted ntfy: prompt for server URL + optional auth credentials; output a ready-to-use `docker-compose.yml`
-   - For Tailscale: detect Tailscale IP automatically, configure daemon HTTP server, output phone polling URL
-   - All paths end with a live test notification so user knows it works before they walk away
-   - Reruns cleanly to switch transports later
-
-6. **Pattern management CLI** (~2–3h)
+5. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
+
+6. **CONTRIBUTING.md + CI** (~1–2h)
+   - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
+   - GitHub Actions: `shellcheck` on hookline.sh and install.sh to catch syntax errors before release
+   - Essential for a FOSS project inviting contributions; low effort, high community signal
 
 ## v1.3 — Medium-term
 
@@ -69,6 +83,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
 - **Always-deny patterns** — companion to allowlist for commands that should always be blocked
 - **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
+- **CHANGELOG** — versioned release notes; important signal of project health for FOSS adopters
 
 ---
 

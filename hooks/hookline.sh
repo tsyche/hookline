@@ -102,14 +102,40 @@ else
   NOTIFY_MSG="${TOOL_INPUT:0:300}"
 fi
 
+# Per-session lock: kill any existing background process for this session
+# before starting a new one, preventing zombie accumulation.
+LOCK_FILE="${HOME}/.local/share/hookline/session-${SESSION_ID}.lock"
+if [ -f "$LOCK_FILE" ]; then
+  old_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+    log "killing previous session background process $old_pid"
+    kill "$old_pid" 2>/dev/null
+  fi
+fi
+
 # Transcript line count is captured AFTER 1s buffer (inside background) to let
 # Claude Code finish writing the tool_use line before we baseline.
 
 (
+  echo "$BASHPID" > "$LOCK_FILE"
+  trap "rm -f '$LOCK_FILE'" EXIT
   # Phase 1: Send initial notification and listen for response
   send_initial_notification() {
+    # Global ntfy throttle — shared across all hookline instances and projects
+    # to avoid hammering ntfy.sh and triggering IP blocks.
+    THROTTLE_FILE="${HOME}/.local/share/hookline/ntfy-throttle"
+    THROTTLE_INTERVAL="${HOOKLINE_NTFY_MIN_INTERVAL:-5}"
+    last_req=$(cat "$THROTTLE_FILE" 2>/dev/null || echo 0)
+    elapsed=$(( $(date +%s) - last_req ))
+    if [ "$elapsed" -lt "$THROTTLE_INTERVAL" ]; then
+      sleep $(( THROTTLE_INTERVAL - elapsed ))
+    fi
+    date +%s > "$THROTTLE_FILE"
+
     log "background: sending initial phone notification..."
-    curl -s -H "Content-Type: application/json" \
+    AUTH_ARGS=()
+    [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+    curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
       -d "$(jq -nc \
         --arg topic "$TOPIC" \
         --arg title "[$PROJECT] $TOOL_NAME" \
@@ -132,10 +158,10 @@ fi
     local elapsed=0
     local since_id="$response_id"
     while [ "$elapsed" -lt "$PHONE_TIMEOUT" ]; do
-      sleep 3
-      elapsed=$((elapsed + 3))
+      sleep 8
+      elapsed=$((elapsed + 8))
       # Poll for new messages since the notification was sent
-      msgs=$(curl -s --max-time 5 \
+      msgs=$(curl -s --max-time 5 "${AUTH_ARGS[@]}" \
         "${NTFY_SERVER}/${RESPONSE_TOPIC}/json?poll=1&since=${since_id}" 2>/dev/null)
       while IFS= read -r msg; do
         [ -z "$msg" ] && continue
@@ -179,17 +205,25 @@ fi
   fi
   log "background: no new transcript lines, user likely away - sending notification"
 
-  # Send notification; loop on timeout or manual Retry tap
+  # Send notification; loop on timeout (max 5 auto-retries) or manual Retry tap
+  MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-5}"
+  retries=0
   while true; do
     if send_initial_notification; then
       if [ "$DECISION" = "retry" ]; then
         log "background: user tapped Retry, resending..."
+        retries=0  # manual retry resets the auto-retry counter
       else
         handle_decision "$DECISION"
         break
       fi
     else
-      log "background: notification timed out, resending..."
+      retries=$((retries + 1))
+      if [ "$retries" -ge "$MAX_RETRIES" ]; then
+        log "background: max retries ($MAX_RETRIES) reached, giving up"
+        break
+      fi
+      log "background: notification timed out, resending (attempt $retries/$MAX_RETRIES)..."
     fi
   done
 ) &>/dev/null &
