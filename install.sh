@@ -54,6 +54,14 @@ cp "$HOOK_SRC" "$HOOK_DST"
 chmod +x "$HOOK_DST"
 echo "Hook installed to $HOOK_DST"
 
+# Install CLI
+CLI_SRC="$(cd "$(dirname "$0")" && pwd)/hookline"
+CLI_DST="/usr/local/bin/hookline"
+if [ -f "$CLI_SRC" ]; then
+  cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST" && echo "CLI installed to $CLI_DST" \
+    || echo "Warning: could not install to $CLI_DST (try sudo). Run ./hookline directly instead."
+fi
+
 # Register hook in Claude Code settings
 if [ -f "$SETTINGS" ]; then
   # Check if hookline is already registered
