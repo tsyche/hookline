@@ -117,8 +117,7 @@ fi
 # Claude Code finish writing the tool_use line before we baseline.
 
 (
-  echo "$BASHPID" > "$LOCK_FILE"
-  trap "rm -f '$LOCK_FILE'" EXIT
+  trap '[[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$BASHPID" ]] && rm -f "$LOCK_FILE"' EXIT
   # Phase 1: Send initial notification and listen for response
   send_initial_notification() {
     # Global ntfy throttle — shared across all hookline instances and projects
@@ -227,6 +226,7 @@ fi
     fi
   done
 ) &>/dev/null &
+echo "$!" > "$LOCK_FILE"
 
 log "=== hook complete ==="
 exit 0
