@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hookline.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>HOOKLINE_DAEMON_PATH</string>
+        <string>daemon</string>
+        <string>_run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>HOOKLINE_LOG_DIR/daemon.log</string>
+    <key>StandardOutPath</key>
+    <string>HOOKLINE_LOG_DIR/daemon.log</string>
+</dict>
+</plist>

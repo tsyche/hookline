@@ -1,0 +1,187 @@
+#!/bin/bash
+# hookline — CLI for managing the hookline Claude Code hook
+
+CONFIG_FILE="${HOME}/.config/hookline/config"
+LOG_FILE="${HOME}/.local/share/hookline/hookline.log"
+HOOK_DST="${HOME}/.local/share/hookline/hooks/hookline.sh"
+DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
+DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
+DAEMON_PID="${HOME}/.local/share/hookline/daemon.pid"
+PLIST_LABEL="com.hookline.daemon"
+PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+SETTINGS="${HOME}/.claude/settings.json"
+
+usage() {
+  cat <<EOF
+usage: hookline <command>
+
+Commands:
+  status          Show config, hook registration, daemon status, connectivity
+  daemon start    Start the hookline daemon (registers with launchd)
+  daemon stop     Stop the daemon
+  daemon restart  Restart the daemon
+  daemon status   Show daemon status
+  help            Show this help
+EOF
+}
+
+# ── daemon helpers ─────────────────────────────────────────────────────────────
+
+daemon_query() {
+  python3 -c "
+import socket, json, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+try:
+    s.connect('${DAEMON_SOCK}')
+    s.sendall(json.dumps({'type':'status'}).encode())
+    s.shutdown(socket.SHUT_WR)
+    print(s.recv(4096).decode())
+except Exception as e:
+    sys.exit(1)
+finally:
+    s.close()
+" 2>/dev/null
+}
+
+daemon_running() {
+  [ -S "$DAEMON_SOCK" ] && daemon_query &>/dev/null
+}
+
+cmd_daemon() {
+  local subcmd="${1:-status}"
+  case "$subcmd" in
+    _run)
+      exec python3 "$DAEMON_DST" start
+      ;;
+
+    start)
+      if daemon_running; then
+        echo "daemon already running"
+        return 0
+      fi
+      if [ ! -f "$PLIST_DST" ]; then
+        echo "daemon not installed — run install.sh first"
+        return 1
+      fi
+      launchctl load "$PLIST_DST" 2>/dev/null
+      sleep 1
+      if daemon_running; then
+        echo "daemon started ✓"
+      else
+        echo "daemon failed to start — check ${HOME}/.local/share/hookline/daemon.log"
+        return 1
+      fi
+      ;;
+
+    stop)
+      launchctl unload "$PLIST_DST" 2>/dev/null
+      if [ -f "$DAEMON_PID" ]; then
+        kill "$(cat "$DAEMON_PID")" 2>/dev/null
+      fi
+      echo "daemon stopped"
+      ;;
+
+    restart)
+      cmd_daemon stop
+      sleep 1
+      cmd_daemon start
+      ;;
+
+    status)
+      echo "── Daemon"
+      if daemon_running; then
+        info=$(daemon_query)
+        pid=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pid','?'))" 2>/dev/null)
+        sessions=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('sessions',0))" 2>/dev/null)
+        pending=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pending',0))" 2>/dev/null)
+        echo "  running ✓  pid=$pid  sessions=$sessions  pending=$pending"
+      elif [ -f "$PLIST_DST" ]; then
+        echo "  NOT running (installed, not started — run: hookline daemon start)"
+      else
+        echo "  NOT installed — run install.sh"
+      fi
+      ;;
+
+    *)
+      echo "hookline daemon: unknown subcommand '$subcmd'"
+      echo "usage: hookline daemon start|stop|restart|status"
+      return 1
+      ;;
+  esac
+}
+
+# ── status ─────────────────────────────────────────────────────────────────────
+
+cmd_status() {
+  echo "=== hookline status ==="
+  echo
+
+  echo "── Config ($CONFIG_FILE)"
+  if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE" 2>/dev/null
+    echo "  topic:         ${HOOKLINE_TOPIC:-"(not set)"}"
+    echo "  server:        ${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+    echo "  grace period:  ${HOOKLINE_GRACE_PERIOD:-20}s"
+    echo "  phone timeout: ${HOOKLINE_PHONE_TIMEOUT:-60}s"
+    echo "  max retries:   ${HOOKLINE_MAX_RETRIES:-3}"
+    [ -n "$HOOKLINE_NTFY_USERNAME" ] && echo "  auth:          ${HOOKLINE_NTFY_USERNAME}@..."
+  else
+    echo "  NOT FOUND — run install.sh first"
+  fi
+  echo
+
+  cmd_daemon status
+  echo
+
+  echo "── Hook registration ($SETTINGS)"
+  if [ -f "$SETTINGS" ]; then
+    if jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$SETTINGS" &>/dev/null; then
+      echo "  registered ✓"
+    else
+      echo "  NOT registered — run install.sh to register"
+    fi
+  else
+    echo "  settings.json not found"
+  fi
+  echo
+
+  echo "── Hook file ($HOOK_DST)"
+  if [ -f "$HOOK_DST" ]; then
+    echo "  installed ✓  ($(wc -l < "$HOOK_DST" | tr -d ' ') lines)"
+  else
+    echo "  NOT installed — run install.sh"
+  fi
+  echo
+
+  SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+  echo "── Connectivity ($SERVER)"
+  AUTH_ARGS=()
+  [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_ARGS[@]}" "${SERVER}/")
+  if [ "$http_code" = "200" ] || [ "$http_code" = "404" ]; then
+    echo "  reachable ✓  (HTTP $http_code)"
+  elif [ "$http_code" = "000" ]; then
+    echo "  UNREACHABLE — connection failed (banned? server down?)"
+  else
+    echo "  HTTP $http_code"
+  fi
+  echo
+
+  echo "── Recent log (last 10 lines)"
+  if [ -f "$LOG_FILE" ]; then
+    tail -10 "$LOG_FILE" | sed 's/^/  /'
+  else
+    echo "  no log file yet"
+  fi
+  echo
+}
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+  status)         cmd_status ;;
+  daemon)         shift; cmd_daemon "$@" ;;
+  help|--help|-h) usage ;;
+  *) echo "hookline: unknown command '$1'"; echo; usage; exit 1 ;;
+esac

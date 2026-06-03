@@ -1,8 +1,14 @@
 #!/bin/bash
 set -e
 
-HOOK_SRC="$(cd "$(dirname "$0")" && pwd)/hooks/hookline.sh"
+REPO="$(cd "$(dirname "$0")" && pwd)"
+HOOK_SRC="${REPO}/hooks/hookline.sh"
 HOOK_DST="${HOME}/.local/share/hookline/hooks/hookline.sh"
+DAEMON_SRC="${REPO}/daemon/hookline-daemon"
+DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
+PLIST_SRC="${REPO}/daemon/com.hookline.daemon.plist"
+PLIST_LABEL="com.hookline.daemon"
+PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 CONFIG_DIR="${HOME}/.config/hookline"
 CONFIG_FILE="${CONFIG_DIR}/config"
 LOG_DIR="${HOME}/.local/share/hookline"
@@ -12,7 +18,7 @@ echo "=== hookline installer ==="
 echo
 
 # Check dependencies
-for cmd in jq curl; do
+for cmd in jq curl python3; do
   command -v "$cmd" &>/dev/null || { echo "Error: $cmd is required but not installed."; exit 1; }
 done
 
@@ -21,8 +27,12 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   command -v osascript &>/dev/null || echo "Warning: osascript not found — keystroke injection disabled."
 fi
 
+# Check dependencies
+command -v python3 &>/dev/null || { echo "Error: python3 is required but not installed."; exit 1; }
+
 # Create directories
-mkdir -p "$(dirname "$HOOK_DST")" "$CONFIG_DIR" "$LOG_DIR"
+mkdir -p "$(dirname "$HOOK_DST")" "$(dirname "$DAEMON_DST")" "$CONFIG_DIR" "$LOG_DIR" \
+         "${HOME}/Library/LaunchAgents"
 
 # Configure topic
 if [ -f "$CONFIG_FILE" ]; then
@@ -55,12 +65,25 @@ chmod +x "$HOOK_DST"
 echo "Hook installed to $HOOK_DST"
 
 # Install CLI
-CLI_SRC="$(cd "$(dirname "$0")" && pwd)/hookline"
+CLI_SRC="${REPO}/hookline"
 CLI_DST="/usr/local/bin/hookline"
 if [ -f "$CLI_SRC" ]; then
   cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST" && echo "CLI installed to $CLI_DST" \
     || echo "Warning: could not install to $CLI_DST (try sudo). Run ./hookline directly instead."
 fi
+
+# Install daemon
+cp "$DAEMON_SRC" "$DAEMON_DST"
+chmod +x "$DAEMON_DST"
+echo "Daemon installed to $DAEMON_DST"
+
+# Install and register launchd plist
+sed -e "s|HOOKLINE_DAEMON_PATH|$CLI_DST|g" \
+    -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
+    "$PLIST_SRC" > "$PLIST_DST"
+launchctl unload "$PLIST_DST" 2>/dev/null || true
+launchctl load "$PLIST_DST"
+echo "Daemon registered with launchd and started"
 
 # Register hook in Claude Code settings
 if [ -f "$SETTINGS" ]; then
@@ -87,4 +110,5 @@ fi
 echo
 echo "=== Installation complete ==="
 echo "Subscribe to topic '${HOOKLINE_TOPIC}' in the ntfy app on your phone."
+echo "Run 'hookline status' to verify everything is running."
 echo "Run 'bash scripts/test.sh' to send a test notification."

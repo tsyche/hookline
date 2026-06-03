@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""hookline daemon — receives ntfy phone responses via SSE and routes them.
+
+Maintains a persistent SSE connection so phone responses arrive instantly.
+For tmux sessions: injects keystrokes directly (no accessibility needed).
+For all others: writes a response file that the hook process reads and acts on,
+keeping keystroke injection in the hook's process tree (already trusted by macOS).
+"""
+
+import base64
+import json
+import logging
+import os
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+import urllib.error
+
+SOCKET_PATH   = os.path.expanduser("~/.local/share/hookline/daemon.sock")
+PID_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.pid")
+LOG_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.log")
+CONFIG_PATH   = os.path.expanduser("~/.config/hookline/config")
+THROTTLE_PATH = os.path.expanduser("~/.local/share/hookline/ntfy-throttle")
+
+
+def load_config():
+    config = {}
+    try:
+        with open(CONFIG_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, _, val = line.partition('=')
+                    config[key.strip()] = val.strip().strip('"\'')
+    except FileNotFoundError:
+        pass
+    return config
+
+
+class Daemon:
+    def __init__(self):
+        logging.basicConfig(
+            filename=LOG_PATH,
+            level=logging.INFO,
+            format='[%(asctime)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        )
+        self.log     = logging.getLogger('hookline')
+        self.sessions = {}  # session_id → info dict
+        self.pending  = {}  # req_id → session_id
+        self.lock     = threading.Lock()
+        self._stop    = threading.Event()
+
+    # ── ntfy ──────────────────────────────────────────────────────────────────
+
+    def _ntfy_headers(self, config):
+        headers = {'Content-Type': 'application/json'}
+        user = config.get('HOOKLINE_NTFY_USERNAME', '')
+        if user:
+            creds = base64.b64encode(
+                f"{user}:{config.get('HOOKLINE_NTFY_PASSWORD','')}".encode()
+            ).decode()
+            headers['Authorization'] = f'Basic {creds}'
+        return headers
+
+    def _throttle(self):
+        try:
+            last = float(open(THROTTLE_PATH).read().strip())
+        except Exception:
+            last = 0
+        wait = 5 - (time.time() - last)
+        if wait > 0:
+            time.sleep(wait)
+        with open(THROTTLE_PATH, 'w') as f:
+            f.write(str(time.time()))
+
+    def send_ntfy(self, config, title, message, req_id):
+        self._throttle()
+        topic      = config.get('HOOKLINE_TOPIC', '')
+        server     = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
+        resp_topic = f"{topic}-response"
+        payload = json.dumps({
+            'topic': topic, 'title': title, 'message': message,
+            'priority': 4, 'tags': ['lock'],
+            'actions': [
+                {'action':'http','label':'Allow','url':f"{server}/{resp_topic}",'method':'POST','body':f"allow|{req_id}"},
+                {'action':'http','label':'Deny', 'url':f"{server}/{resp_topic}",'method':'POST','body':f"deny|{req_id}"},
+                {'action':'http','label':'Retry','url':f"{server}/{resp_topic}",'method':'POST','body':f"retry|{req_id}"},
+            ],
+        }).encode()
+        req = urllib.request.Request(
+            f"{server}/", data=payload, headers=self._ntfy_headers(config), method='POST'
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                self.log.info(f"[{req_id[:16]}] notification sent id={result.get('id','?')}")
+                return True
+        except Exception as e:
+            self.log.error(f"[{req_id[:16]}] failed to send: {e}")
+            return False
+
+    # ── SSE listener ───────────────────────────────────────────────────────────
+
+    def sse_listener(self):
+        while not self._stop.is_set():
+            try:
+                config = load_config()
+                topic  = config.get('HOOKLINE_TOPIC', '')
+                server = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
+                url    = f"{server}/{topic}-response/json"
+                self.log.info(f"SSE connecting to {url}")
+                req = urllib.request.Request(url, headers=self._ntfy_headers(config))
+                with urllib.request.urlopen(req, timeout=600) as resp:
+                    for raw in resp:
+                        if self._stop.is_set():
+                            return
+                        line = raw.decode('utf-8').strip()
+                        if not line:
+                            continue
+                        try:
+                            msg  = json.loads(line)
+                            body = msg.get('message', '')
+                            if '|' in body:
+                                decision, req_id = body.rsplit('|', 1)
+                                threading.Thread(
+                                    target=self.handle_response,
+                                    args=(req_id.strip(), decision.strip()),
+                                    daemon=True,
+                                ).start()
+                        except json.JSONDecodeError:
+                            pass
+            except Exception as e:
+                self.log.warning(f"SSE lost ({e}), reconnecting in 5s")
+                time.sleep(5)
+
+    # ── response routing ───────────────────────────────────────────────────────
+
+    def handle_response(self, req_id, decision):
+        with self.lock:
+            session_id = self.pending.get(req_id)
+        if not session_id:
+            self.log.info(f"[{req_id[:16]}] unknown req_id, ignoring")
+            return
+        with self.lock:
+            session = dict(self.sessions.get(session_id, {}))
+        self.log.info(f"[{req_id[:16]}] phone: {decision}")
+
+        tmux_pane     = session.get('tmux_pane', '')
+        response_file = session.get('response_file', '')
+
+        if decision in ('allow', 'deny'):
+            if tmux_pane:
+                # tmux injection needs no accessibility permissions
+                key = '1' if decision == 'allow' else '3'
+                self.log.info(f"inject via tmux pane {tmux_pane}")
+                subprocess.run(
+                    ['tmux', 'send-keys', '-t', tmux_pane, key, 'Enter'],
+                    capture_output=True,
+                )
+            else:
+                # Write response file; hook process (child of terminal) injects
+                self._write_response(response_file, decision)
+            with self.lock:
+                self.pending.pop(req_id, None)
+
+        elif decision == 'retry':
+            # Tell hook to resend — it controls retry count
+            self._write_response(response_file, 'retry')
+            with self.lock:
+                self.pending.pop(req_id, None)
+
+    def _write_response(self, response_file, decision):
+        if not response_file:
+            return
+        try:
+            with open(response_file, 'w') as f:
+                f.write(decision)
+        except Exception as e:
+            self.log.error(f"failed to write response file: {e}")
+
+    # ── socket server ─────────────────────────────────────────────────────────
+
+    def handle_notify(self, msg):
+        session_id    = msg['session_id']
+        req_id        = msg['req_id']
+        title         = msg.get('title', 'hookline')
+        message       = msg.get('message', '')
+        response_file = msg.get('response_file', '')
+        max_retries   = int(msg.get('max_retries', 2))
+
+        config = load_config()
+        with self.lock:
+            for old_req in [r for r, s in self.pending.items() if s == session_id]:
+                self.log.info(f"[{old_req[:16]}] superseded, cancelling")
+                del self.pending[old_req]
+            self.pending[req_id] = session_id
+            sess = self.sessions.setdefault(session_id, {})
+            sess.update({
+                'notify_title':   title,
+                'notify_message': message,
+                'response_file':  response_file,
+                'max_retries':    max_retries,
+                'retry_count':    0,
+            })
+
+        self.send_ntfy(config, title, message, req_id)
+
+    def handle_connection(self, conn):
+        try:
+            data = b''
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            msg      = json.loads(data.decode())
+            msg_type = msg.get('type')
+
+            if msg_type == 'register':
+                session_id = msg['session_id']
+                with self.lock:
+                    sess = self.sessions.setdefault(session_id, {})
+                    sess.update({
+                        'tty':          msg.get('tty', ''),
+                        'term_program': msg.get('term_program', ''),
+                        'tmux_pane':    msg.get('tmux_pane', ''),
+                    })
+                self.log.info(
+                    f"registered session {session_id[:8]} "
+                    f"tty={msg.get('tty','')} tmux={msg.get('tmux_pane','')}"
+                )
+                conn.sendall(b'ok')
+
+            elif msg_type == 'notify':
+                conn.sendall(b'ok')
+                conn.close()
+                self.handle_notify(msg)
+                return
+
+            elif msg_type == 'cancel':
+                req_id = msg.get('req_id', '')
+                with self.lock:
+                    self.pending.pop(req_id, None)
+                self.log.info(f"[{req_id[:16]}] cancelled by hook")
+                conn.sendall(b'ok')
+
+            elif msg_type == 'status':
+                with self.lock:
+                    status = {
+                        'pid':      os.getpid(),
+                        'sessions': len(self.sessions),
+                        'pending':  len(self.pending),
+                    }
+                conn.sendall(json.dumps(status).encode())
+
+            else:
+                conn.sendall(b'unknown')
+        except Exception as e:
+            self.log.error(f"connection error: {e}")
+        finally:
+            conn.close()
+
+    def serve(self):
+        if os.path.exists(SOCKET_PATH):
+            os.unlink(SOCKET_PATH)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(SOCKET_PATH)
+        os.chmod(SOCKET_PATH, 0o600)
+        server.listen(20)
+        server.settimeout(1.0)
+        self.log.info(f"listening on {SOCKET_PATH}")
+        while not self._stop.is_set():
+            try:
+                conn, _ = server.accept()
+                threading.Thread(
+                    target=self.handle_connection, args=(conn,), daemon=True
+                ).start()
+            except socket.timeout:
+                continue
+            except Exception as e:
+                self.log.error(f"socket error: {e}")
+        server.close()
+        if os.path.exists(SOCKET_PATH):
+            os.unlink(SOCKET_PATH)
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self):
+        with open(PID_PATH, 'w') as f:
+            f.write(str(os.getpid()))
+
+        def on_signal(sig, frame):
+            self.log.info("shutting down")
+            self._stop.set()
+
+        signal.signal(signal.SIGTERM, on_signal)
+        signal.signal(signal.SIGINT, on_signal)
+
+        self.log.info(f"hookline daemon starting pid={os.getpid()}")
+        threading.Thread(target=self.sse_listener, daemon=True).start()
+        self.serve()
+
+        if os.path.exists(PID_PATH):
+            os.unlink(PID_PATH)
+        self.log.info("daemon stopped")
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2 or sys.argv[1] != 'start':
+        print("usage: hookline-daemon start", file=sys.stderr)
+        sys.exit(1)
+    Daemon().start()

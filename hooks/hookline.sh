@@ -1,16 +1,37 @@
 #!/bin/bash
 # hookline — Claude Code PreToolUse hook → ntfy.sh remote approval
 # Shows terminal prompt immediately; sends phone notification after grace period.
-# If phone response arrives, keystroke injection dismisses the terminal prompt.
-# Answer from terminal or phone — whichever is convenient.
+# Daemon mode: SSE-based instant response; hook process handles keystroke injection
+#              (runs in terminal's process tree, no extra accessibility permissions).
+# Fallback mode: inline polling when daemon is not running.
 
 CONFIG_FILE="${HOME}/.config/hookline/config"
 LOG_FILE="${HOME}/.local/share/hookline/hookline.log"
+DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
 SETTINGS_LOCAL="${CWD:+$CWD/../.claude/settings.local.json}"
 SETTINGS_LOCAL="${SETTINGS_LOCAL:-${HOME}/.claude/settings.local.json}"
 
 log() {
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${REQ_ID:-init}" "$*" >> "$LOG_FILE"
+}
+
+# Send a JSON message to the daemon socket; returns 0 on success.
+daemon_send() {
+  python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+try:
+    s.connect('${DAEMON_SOCK}')
+    s.sendall(sys.stdin.buffer.read())
+    s.shutdown(socket.SHUT_WR)
+    s.recv(64)
+    sys.exit(0)
+except:
+    sys.exit(1)
+finally:
+    s.close()
+" <<< "$1" 2>/dev/null
 }
 
 source "$CONFIG_FILE" 2>/dev/null || { echo "config not found"; exit 0; }
@@ -31,20 +52,14 @@ log "tool: $TOOL_NAME | parent_tty: $PARENT_TTY"
 log "transcript_path: $TRANSCRIPT_PATH"
 log "session_id: $SESSION_ID"
 
-# 1. Check if tool/input matches a pattern in project's allowlist (skip notification entirely)
-SHOULD_NOTIFY=true
-
-# Built-in safe-command prefixes
+# 1. Check allowlist — skip notification entirely if matched
 SAFE_PREFIXES=("echo " "stat " "ls " "pwd " "pwd" "cat " "grep " "find " "date " "whoami " "hostname " "uname " "which " "type " "file " "head " "tail " "wc " "sort " "uniq " "cut " "tr ")
 
 if [ "$TOOL_NAME" = "Bash" ]; then
-  # Extract actual command from Bash input JSON
   cmd=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
   [ -z "$cmd" ] && cmd="$TOOL_INPUT"
-
   log "extracted bash command: $cmd"
 
-  # Check built-in safe prefixes
   for prefix in "${SAFE_PREFIXES[@]}"; do
     if [[ "$cmd" == "$prefix"* ]]; then
       log "matches safe prefix: $prefix → defer silently"
@@ -53,7 +68,6 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     fi
   done
 
-  # Check project's allowlist patterns
   if [ -f "$SETTINGS_LOCAL" ]; then
     patterns=$(jq -r '.permissions.allow[] | select(startswith("Bash(")) | sub("Bash\\("; "") | sub("\\)$"; "")' "$SETTINGS_LOCAL" 2>/dev/null)
     while IFS= read -r pattern; do
@@ -76,19 +90,11 @@ if [ "$TOOL_NAME" = "Bash" ]; then
   fi
 fi
 
-# 2. OUTPUT ASK IMMEDIATELY (this is the decision that shows terminal prompt)
+# 2. Output ask — shows terminal permission prompt immediately
 log "OUTPUT: ask"
 jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask"}}'
 
-# 3. Now do the async work: send notification + listen for phone + inject keystroke
-# This runs in background AFTER the hook has already output its decision
-TOPIC="${HOOKLINE_TOPIC:?hookline: HOOKLINE_TOPIC not set in config}"
-NTFY_SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
-RESPONSE_TOPIC="${TOPIC}-response"
-PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-60}"
-GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
-
-# Build human-readable notification message (instead of raw JSON blob)
+# 3. Build notification message
 if [ "$TOOL_NAME" = "Bash" ]; then
   _cmd=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
   NOTIFY_MSG="$ ${_cmd:0:280}"
@@ -102,8 +108,24 @@ else
   NOTIFY_MSG="${TOOL_INPUT:0:300}"
 fi
 
-# Per-session lock: kill any existing background process for this session
-# before starting a new one, preventing zombie accumulation.
+GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
+PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-60}"
+MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-3}"
+
+# 4. Register session with daemon (captures TTY + terminal info for routing)
+if [ -S "$DAEMON_SOCK" ]; then
+  TMUX_PANE_ID="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null)}"
+  daemon_send "$(jq -nc \
+    --arg type "register" \
+    --arg session_id "$SESSION_ID" \
+    --arg tty "$PARENT_TTY" \
+    --arg term_program "${TERM_PROGRAM:-}" \
+    --arg tmux_pane "${TMUX_PANE_ID:-}" \
+    '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane}')"
+  log "registered session with daemon"
+fi
+
+# 5. Per-session lock: kill any existing grace-period process for this session
 LOCK_FILE="${HOME}/.local/share/hookline/session-${SESSION_ID}.lock"
 if [ -f "$LOCK_FILE" ]; then
   old_pid=$(cat "$LOCK_FILE" 2>/dev/null)
@@ -113,85 +135,10 @@ if [ -f "$LOCK_FILE" ]; then
   fi
 fi
 
-# Transcript line count is captured AFTER 1s buffer (inside background) to let
-# Claude Code finish writing the tool_use line before we baseline.
-
+# 6. Background process: grace period watcher + response handler
 (
   trap '[[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$BASHPID" ]] && rm -f "$LOCK_FILE"' EXIT
-  # Phase 1: Send initial notification and listen for response
-  send_initial_notification() {
-    # Global ntfy throttle — shared across all hookline instances and projects
-    # to avoid hammering ntfy.sh and triggering IP blocks.
-    THROTTLE_FILE="${HOME}/.local/share/hookline/ntfy-throttle"
-    THROTTLE_INTERVAL="${HOOKLINE_NTFY_MIN_INTERVAL:-5}"
-    last_req=$(cat "$THROTTLE_FILE" 2>/dev/null || echo 0)
-    elapsed=$(( $(date +%s) - last_req ))
-    if [ "$elapsed" -lt "$THROTTLE_INTERVAL" ]; then
-      sleep $(( THROTTLE_INTERVAL - elapsed ))
-    fi
-    date +%s > "$THROTTLE_FILE"
 
-    log "background: sending initial phone notification..."
-    AUTH_ARGS=()
-    [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
-    curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
-      -d "$(jq -nc \
-        --arg topic "$TOPIC" \
-        --arg title "[$PROJECT] $TOOL_NAME" \
-        --arg message "$NOTIFY_MSG" \
-        --arg url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
-        '{
-          topic: $topic, title: $title, message: $message,
-          priority: 4, tags: ["lock"],
-          actions: [
-            {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'$REQ_ID'"},
-            {action:"http",label:"Deny",url:$url,method:"POST",body:"deny|'$REQ_ID'"},
-            {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'$REQ_ID'"}
-          ]
-        }')" "${NTFY_SERVER}/" > /tmp/ntfy-response-$REQ_ID.json 2>&1
-    response_id=$(cat /tmp/ntfy-response-$REQ_ID.json 2>/dev/null | jq -r '.id // "NO_ID"')
-    log "notification sent, response id: $response_id"
-
-    log "background: polling for phone response (${PHONE_TIMEOUT}s)..."
-    DECISION=""
-    local elapsed=0
-    local since_id="$response_id"
-    while [ "$elapsed" -lt "$PHONE_TIMEOUT" ]; do
-      sleep 8
-      elapsed=$((elapsed + 8))
-      # Poll for new messages since the notification was sent
-      msgs=$(curl -s --max-time 5 "${AUTH_ARGS[@]}" \
-        "${NTFY_SERVER}/${RESPONSE_TOPIC}/json?poll=1&since=${since_id}" 2>/dev/null)
-      while IFS= read -r msg; do
-        [ -z "$msg" ] && continue
-        msg_id=$(echo "$msg" | jq -r '.id // empty' 2>/dev/null)
-        MSG=$(echo "$msg" | jq -r '.message // empty' 2>/dev/null)
-        [ -n "$msg_id" ] && since_id="$msg_id"
-        if [[ "$MSG" == *"|$REQ_ID" ]]; then
-          DECISION="${MSG%%|*}"
-          log "background: phone response: $DECISION"
-          return 0
-        fi
-      done <<< "$msgs"
-    done
-
-    return 1  # Timeout (no response)
-  }
-
-  # Handle decision (allow/deny)
-  handle_decision() {
-    local decision="$1"
-    if [ "$decision" = "allow" ]; then
-      log "background: injecting keystroke '1' + Enter (Allow)"
-      osascript -e "tell application \"System Events\" to tell process \"iTerm2\" to keystroke \"1\"" -e "tell application \"System Events\" to key code 36" 2>/dev/null
-    elif [ "$decision" = "deny" ]; then
-      log "background: injecting keystroke '3' + Enter (Deny)"
-      osascript -e "tell application \"System Events\" to tell process \"iTerm2\" to keystroke \"3\"" -e "tell application \"System Events\" to key code 36" 2>/dev/null
-    fi
-  }
-
-  # Main flow: 1s buffer (let tool_use line settle), baseline line count,
-  # then 20s grace period, then send notification.
   sleep 1
   INITIAL_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
   log "background: baseline transcript lines: $INITIAL_LINES, starting ${GRACE_PERIOD}s grace period..."
@@ -202,23 +149,176 @@ fi
     log "background: transcript grew ($INITIAL_LINES → $CURRENT_LINES lines), user answered locally, exiting"
     exit 0
   fi
-  log "background: no new transcript lines, user likely away - sending notification"
+  log "background: no new transcript lines, user likely away"
 
-  # Send notification; loop on timeout (max 5 auto-retries) or manual Retry tap
-  MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-2}"
+  inject_keystroke() {
+    local key="$1"
+    local label="$2"
+    log "background: injecting keystroke '$key' + Enter ($label) via ${TERM_PROGRAM:-unknown}"
+    case "${TERM_PROGRAM:-}" in
+      iTerm.app)
+        osascript \
+          -e "tell application \"System Events\" to tell process \"iTerm2\" to keystroke \"$key\"" \
+          -e "tell application \"System Events\" to tell process \"iTerm2\" to key code 36" \
+          2>/dev/null ;;
+      Apple_Terminal)
+        osascript \
+          -e "tell application \"System Events\" to tell process \"Terminal\" to keystroke \"$key\"" \
+          -e "tell application \"System Events\" to tell process \"Terminal\" to key code 36" \
+          2>/dev/null ;;
+      WezTerm)
+        osascript \
+          -e "tell application \"System Events\" to tell process \"WezTerm\" to keystroke \"$key\"" \
+          -e "tell application \"System Events\" to tell process \"WezTerm\" to key code 36" \
+          2>/dev/null ;;
+      *)
+        # Fallback: target frontmost app (works for most terminals on macOS)
+        osascript \
+          -e "tell application \"System Events\" to keystroke \"$key\"" \
+          -e "tell application \"System Events\" to key code 36" \
+          2>/dev/null ;;
+    esac
+  }
+
+  # — Daemon path —
+  if [ -S "$DAEMON_SOCK" ]; then
+    log "background: daemon available, handing off notification"
+    RESPONSE_FILE="/tmp/hookline-resp-${REQ_ID}"
+    trap 'rm -f "$RESPONSE_FILE"; [[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$BASHPID" ]] && rm -f "$LOCK_FILE"' EXIT
+
+    retries=0
+    current_req_id="$REQ_ID"
+    while true; do
+      rm -f "$RESPONSE_FILE"
+      daemon_send "$(jq -nc \
+        --arg type "notify" \
+        --arg session_id "$SESSION_ID" \
+        --arg req_id "$current_req_id" \
+        --arg title "[$PROJECT] $TOOL_NAME" \
+        --arg message "$NOTIFY_MSG" \
+        --arg response_file "$RESPONSE_FILE" \
+        --argjson max_retries "$MAX_RETRIES" \
+        '{type:$type,session_id:$session_id,req_id:$req_id,title:$title,message:$message,response_file:$response_file,max_retries:$max_retries}')"
+
+      # Poll for daemon's response, checking transcript in parallel
+      decision=""
+      elapsed=0
+      while [ "$elapsed" -lt "$PHONE_TIMEOUT" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+
+        # Cancel if user answered at terminal
+        cur=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
+        if [ "$cur" -gt "$INITIAL_LINES" ]; then
+          log "background: transcript grew during polling, user answered at terminal"
+          daemon_send "$(jq -nc --arg type "cancel" --arg req_id "$current_req_id" '{type:$type,req_id:$req_id}')"
+          exit 0
+        fi
+
+        if [ -f "$RESPONSE_FILE" ]; then
+          decision=$(cat "$RESPONSE_FILE")
+          rm -f "$RESPONSE_FILE"
+          break
+        fi
+      done
+
+      [ -z "$decision" ] && { log "background: timed out, giving up"; exit 0; }
+      log "background: daemon response: $decision"
+
+      if [ "$decision" = "allow" ]; then
+        inject_keystroke "1" "Allow"
+        exit 0
+      elif [ "$decision" = "deny" ]; then
+        inject_keystroke "3" "Deny"
+        exit 0
+      elif [ "$decision" = "retry" ]; then
+        retries=$((retries + 1))
+        if [ "$retries" -ge "$MAX_RETRIES" ]; then
+          log "background: max retries ($MAX_RETRIES) reached, giving up"
+          exit 0
+        fi
+        current_req_id="${REQ_ID}-r${retries}"
+        log "background: retry $retries/$MAX_RETRIES → $current_req_id"
+      else
+        exit 0
+      fi
+    done
+  fi
+
+  # — Legacy fallback (no daemon): inline polling —
+  log "background: daemon not available, using legacy polling"
+  TOPIC="${HOOKLINE_TOPIC:?hookline: HOOKLINE_TOPIC not set in config}"
+  NTFY_SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+  RESPONSE_TOPIC="${TOPIC}-response"
+
+  send_notification() {
+    local req_id="$1"
+    THROTTLE_FILE="${HOME}/.local/share/hookline/ntfy-throttle"
+    THROTTLE_INTERVAL="${HOOKLINE_NTFY_MIN_INTERVAL:-5}"
+    last_req=$(cat "$THROTTLE_FILE" 2>/dev/null || echo 0)
+    elapsed=$(( $(date +%s) - last_req ))
+    if [ "$elapsed" -lt "$THROTTLE_INTERVAL" ]; then
+      sleep $(( THROTTLE_INTERVAL - elapsed ))
+    fi
+    date +%s > "$THROTTLE_FILE"
+
+    log "background: sending notification..."
+    AUTH_ARGS=()
+    [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+    curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
+      -d "$(jq -nc \
+        --arg topic "$TOPIC" \
+        --arg title "[$PROJECT] $TOOL_NAME" \
+        --arg message "$NOTIFY_MSG" \
+        --arg url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
+        '{topic:$topic,title:$title,message:$message,priority:4,tags:["lock"],
+          actions:[
+            {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'"$req_id"'"},
+            {action:"http",label:"Deny", url:$url,method:"POST",body:"deny|'"$req_id"'"},
+            {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'"$req_id"'"}
+          ]}')" "${NTFY_SERVER}/" > /tmp/ntfy-resp-${req_id}.json 2>&1
+    response_id=$(jq -r '.id // "NO_ID"' /tmp/ntfy-resp-${req_id}.json 2>/dev/null)
+    log "notification sent, response id: $response_id"
+
+    DECISION=""
+    local elapsed=0
+    local since_id="$response_id"
+    while [ "$elapsed" -lt "$PHONE_TIMEOUT" ]; do
+      sleep 8
+      elapsed=$((elapsed + 8))
+      msgs=$(curl -s --max-time 5 "${AUTH_ARGS[@]}" \
+        "${NTFY_SERVER}/${RESPONSE_TOPIC}/json?poll=1&since=${since_id}" 2>/dev/null)
+      while IFS= read -r msg; do
+        [ -z "$msg" ] && continue
+        msg_id=$(echo "$msg" | jq -r '.id // empty' 2>/dev/null)
+        MSG=$(echo "$msg" | jq -r '.message // empty' 2>/dev/null)
+        [ -n "$msg_id" ] && since_id="$msg_id"
+        if [[ "$MSG" == *"|${req_id}" ]]; then
+          DECISION="${MSG%%|*}"
+          log "background: phone response: $DECISION"
+          return 0
+        fi
+      done <<< "$msgs"
+    done
+    return 1
+  }
+
   retries=0
+  current_req="${REQ_ID}"
   while true; do
-    if send_initial_notification; then
-      if [ "$DECISION" = "retry" ]; then
+    if send_notification "$current_req"; then
+      if [ "$DECISION" = "allow" ]; then
+        inject_keystroke "1" "Allow"; break
+      elif [ "$DECISION" = "deny" ]; then
+        inject_keystroke "3" "Deny"; break
+      elif [ "$DECISION" = "retry" ]; then
         retries=$((retries + 1))
         if [ "$retries" -ge "$MAX_RETRIES" ]; then
           log "background: max retries ($MAX_RETRIES) reached, giving up"
           break
         fi
-        log "background: user tapped Retry, resending (attempt $retries/$MAX_RETRIES)..."
-      else
-        handle_decision "$DECISION"
-        break
+        current_req="${REQ_ID}-r${retries}"
+        log "background: retry $retries/$MAX_RETRIES"
       fi
     else
       log "background: notification timed out, giving up"
