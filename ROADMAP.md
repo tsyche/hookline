@@ -12,7 +12,7 @@ hookline should be installable and usable by anyone in under 5 minutes with noth
 
 The setup wizard is what makes all tiers accessible. It should ask the right questions, explain tradeoffs plainly, and handle configuration — no manual file editing required.
 
-## v1.1 — Current (stable)
+## v1.1 — Stable
 
 - [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit
 - [x] Instant terminal prompt — no delay for local users
@@ -23,54 +23,62 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - [x] Keystroke injection to auto-dismiss terminal prompt when phone responds
 - [x] **Always Allow** from terminal saves pattern to project `settings.local.json` allowlist
 - [x] Built-in safe-command prefix auto-approval (echo, grep, cat, ls, etc.)
-- [x] Auto-retry on notification timeout (keeps resending until you respond)
-- [x] Polling-based phone response (avoids ntfy SSE rate limits)
 - [x] Self-hosted ntfy support via `HOOKLINE_NTFY_SERVER`
 - [x] Install / uninstall / test scripts
 
-## v1.2 — Near-term
+## v1.2 — Current (stable)
 
 - [x] **ntfy Basic Auth** — `HOOKLINE_NTFY_USERNAME` / `HOOKLINE_NTFY_PASSWORD` wired into all curl calls
-- [x] **`hookline status` command** — config, hook registration, connectivity ping, last 10 log lines
+- [x] **`hookline status` command** — config, hook registration, daemon status, connectivity ping, last 10 log lines
+- [x] **hookline daemon** — persistent Python daemon with SSE connection for instant phone response (no polling delay); session registry maps session IDs to TTY/terminal/tmux pane; response file IPC keeps keystroke injection in the hook's process tree (no extra macOS accessibility permissions); graceful fallback to inline polling when daemon is down
+- [x] **Multi-terminal injection** — iTerm2, Terminal.app, WezTerm via AppleScript; tmux via `send-keys` (focus-independent); frontmost-app fallback for others
+- [x] **Zombie prevention** — per-session lock file (parent writes `$!`), conditional EXIT trap, max retry cap, global ntfy throttle
 
 1. **Setup wizard** (~2–3h)
    - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
-   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy (requires item 1) → direct/Tailscale (requires daemon, v1.3)
+   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy → direct/Tailscale (daemon HTTP server)
    - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
    - For self-hosted ntfy: prompt for server URL + auth credentials; output a ready-to-use `docker-compose.yml`
+   - Detects whether tmux is installed and active; recommends it for full multi-session support; offers `brew install tmux` if missing
+   - If not using tmux, warns that keystroke injection only works reliably in a single terminal window — concurrent Claude sessions in separate tabs/splits won't both get focus-independent injection
    - All paths end with a live test notification so user knows it works before they walk away
-   - Reruns cleanly to switch transports later; Tailscale path added once daemon ships
+   - Reruns cleanly to switch transports later
 
-2. **AskUserQuestion hook** (~3–4h)
+2. **`hookline topic` command** (~30 min)
+   - `hookline topic <name>` — update topic in config and restart daemon in one step
+   - Avoids manual config editing when switching topics (e.g., after an ntfy ban)
+   - Quick win; solves a real recurring pain point
+
+3. **AskUserQuestion hook** (~3–4h)
    - Route Claude's interactive questions to phone with multi-button answers
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
 
-3. **Pattern management CLI** (~2–3h)
+4. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-4. **CONTRIBUTING.md + CI** (~1–2h)
+5. **CONTRIBUTING.md + CI** (~1–2h)
    - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
    - GitHub Actions: `shellcheck` on hookline.sh and install.sh to catch syntax errors before release
    - Essential for a FOSS project inviting contributions; low effort, high community signal
 
 ## v1.3 — Medium-term
 
-- **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
+- **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
+- **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
-- **hookline daemon + TTY-agnostic injection** — replace per-invocation osascript with a small always-running daemon that maintains a session registry (session ID → TTY/method) and routes phone responses to the correct session using the best available injection method: `tmux send-keys` if in tmux, terminal-specific AppleScript otherwise, with `TIOCSTI` TTY injection as a future option (currently restricted on macOS 12+); solves both multi-session and terminal portability in one architectural move (see [design notes](#multi-session-design))
+- **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 
 ## v1.4 — Future
 
-- **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify (open source, self-hostable, ntfy-compatible API), Telegram bot (free, no rate limits, action buttons), and Pushover; community can add others without touching core
-- **Direct mode via Tailscale / VPN** — run a tiny local HTTP server on the Mac; phone polls it directly over Tailscale IP or VPN — zero relay dependency, no third-party service involved; ideal endgame for users already on Tailscale
-- **hookline relay (self-hostable)** — ship a minimal relay server component (single binary or Docker image) as a fully independent ntfy replacement; deploy on any VPS; uses same poll-based protocol as current ntfy integration
-- **Terminal emulator portability** — support Terminal.app, Warp, Kitty, Ghostty (detect via `$TERM_PROGRAM`); handled as part of the daemon work above
+- **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core
+- **Direct mode via Tailscale / VPN** — daemon exposes a small HTTP server; phone polls it directly over Tailscale IP or VPN — zero relay dependency; PWA or Shortcut as mobile interface
+- **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
 - **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
 - **Notification content control** — configurable truncation; redact sensitive path segments
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
@@ -80,43 +88,23 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ---
 
-## Multi-session & Terminal-agnostic Design
+## Daemon Architecture
 
-Keystroke injection currently targets whatever iTerm2 window is in focus, which breaks with multiple Claude Code sessions open simultaneously and doesn't work in other terminal emulators.
+The hookline daemon (`~/.local/share/hookline/daemon/hookline-daemon`) is a small Python process managed by launchd (`com.hookline.daemon`). It:
 
-**Proposed architecture: hookline daemon**
-
-A small always-running background agent that:
-1. Listens on a Unix socket (`~/.local/share/hookline/daemon.sock`)
-2. On hook fire, registers `session_id → TTY + environment` (captured from hook input)
-3. Phone listener sends decision to daemon socket instead of doing osascript inline
-4. Daemon looks up the session and injects using the best available method:
-   - `$TMUX` set → `tmux send-keys -t <pane>` (focus-independent, terminal-agnostic)
-   - `$TERM_PROGRAM=iTerm.app` → AppleScript targeting specific session by TTY
-   - `$TERM_PROGRAM=WezTerm|Ghostty|...` → terminal-specific APIs
-   - Linux → `xdotool type` targeting window by PID
-   - Last resort → `TIOCSTI` TTY ioctl (restricted on macOS 12+, requires entitlement)
-
-This solves multi-session and terminal portability in one move. tmux users get it for free immediately; non-tmux users get best-effort per terminal emulator.
+1. Listens on a Unix socket (`~/.local/share/hookline/daemon.sock`) for messages from hook invocations
+2. Maintains a persistent SSE connection to the ntfy response topic — phone responses arrive instantly
+3. Stores a session registry mapping `session_id → {tty, term_program, tmux_pane}`
+4. On response: for tmux sessions, injects via `tmux send-keys` directly; for all others, writes a response file that the hook process (a child of the terminal) reads and acts on — keeping keystroke injection in the process tree that already has macOS Accessibility trust
+5. Falls back gracefully: if the daemon is not running, the hook uses inline polling instead
 
 ## Relay-free Design (Tailscale / VPN Direct Mode)
 
-Currently hookline requires a relay because the phone and Mac aren't directly reachable from each other over the internet. With Tailscale (free, easy to set up on any device) or a VPN, they share a private network and can talk directly — no relay needed.
+Currently hookline requires a relay because the phone and Mac aren't directly reachable from each other over the internet. With Tailscale or a VPN, they share a private network and can talk directly.
 
-**Why this is accessible to anyone:** Tailscale has a generous free tier, runs on iOS/Android/macOS/Linux, and takes ~5 minutes to set up. The setup wizard handles detection and configuration. Users don't need to understand networking.
+The daemon already handles the session registry and response routing. Adding direct mode means:
+- Daemon exposes an HTTP endpoint (default port `7676`) bound to the Tailscale/VPN interface
+- Phone polls `http://<device-ip>:7676/pending` and POSTs to `/respond`
+- Daemon receives response and routes as usual — no ntfy involved
 
-**Proposed architecture:**
-
-The hookline daemon (see above) also exposes a small HTTP server on a configurable port (default `7676`). When direct mode is configured, it binds to the Tailscale or VPN interface IP.
-
-- Hook fires → daemon registers the pending approval at `GET /pending`
-- Phone polls `http://<device-ip>:7676/pending` every few seconds
-- Phone approves via `POST /respond` with decision
-- Daemon receives response and injects keystroke as usual
-
-The companion mobile interface could be:
-- A minimal PWA served from the daemon itself (no app store, works in any mobile browser)
-- An iOS/Android Shortcut that polls the endpoint
-- Eventually a dedicated companion app
-
-No third-party services, no rate limits, no single point of failure. The daemon architecture makes this a natural extension — the same daemon handles both relay and direct modes, switching based on config.
+Mobile interface options: minimal PWA served from the daemon, an iOS/Android Shortcut, or eventually a dedicated companion app.

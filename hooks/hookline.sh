@@ -109,7 +109,7 @@ else
 fi
 
 GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
-PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-60}"
+PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
 MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-3}"
 
 # 4. Register session with daemon (captures TTY + terminal info for routing)
@@ -180,6 +180,21 @@ fi
     esac
   }
 
+  send_timeout_notification() {
+    local _topic="${HOOKLINE_TOPIC:-}"
+    local _server="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+    [ -z "$_topic" ] && return
+    local _auth=()
+    [ -n "$HOOKLINE_NTFY_USERNAME" ] && _auth=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+    curl -s "${_auth[@]}" -H "Content-Type: application/json" \
+      -d "$(jq -nc \
+        --arg topic "$_topic" \
+        --arg title "[$PROJECT] Prompt expired" \
+        --arg message "No response after ${PHONE_TIMEOUT}s — Claude is waiting at the terminal" \
+        '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
+      "${_server}/" &>/dev/null
+  }
+
   # — Daemon path —
   if [ -S "$DAEMON_SOCK" ]; then
     log "background: daemon available, handing off notification"
@@ -222,7 +237,11 @@ fi
         fi
       done
 
-      [ -z "$decision" ] && { log "background: timed out, giving up"; exit 0; }
+      if [ -z "$decision" ]; then
+        log "background: timed out, giving up"
+        send_timeout_notification
+        exit 0
+      fi
       log "background: daemon response: $decision"
 
       if [ "$decision" = "allow" ]; then
@@ -322,6 +341,7 @@ fi
       fi
     else
       log "background: notification timed out, giving up"
+      send_timeout_notification
       break
     fi
   done
