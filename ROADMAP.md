@@ -71,6 +71,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
+- **SSH deep link on timeout notification** — when the prompt expires, the timeout notification already fires with no buttons; add a configurable `HOOKLINE_SSH_URL` (e.g. `blinkshell://open?host=...` for iOS Blink, `ssh://user@host` for others) that attaches as a `view` action button on the timeout notification — one tap gets you to the terminal session after a missed prompt; approval notifications stay at 3 buttons (Allow/Deny/Retry) unchanged
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 
