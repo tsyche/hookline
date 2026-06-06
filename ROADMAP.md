@@ -40,6 +40,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
    - For self-hosted ntfy: prompt for server URL + auth credentials; output a ready-to-use `docker-compose.yml`
    - Detects whether tmux is installed and active; recommends it for full multi-session support; offers `brew install tmux` if missing
+   - Offers an optional **SSH In** button for timeout notifications: asks platform/client (Android+ConnectBot → `ssh://`, iOS+Blink → `blinkshell://`) and writes `HOOKLINE_SSH_URL`
    - If not using tmux, warns that keystroke injection only works reliably in a single terminal window — concurrent Claude sessions in separate tabs/splits won't both get focus-independent injection
    - All paths end with a live test notification so user knows it works before they walk away
    - Reruns cleanly to switch transports later
@@ -71,7 +72,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
-- **SSH deep link on timeout notification** — when the prompt expires, the timeout notification already fires with no buttons; add a configurable `HOOKLINE_SSH_URL` (e.g. `blinkshell://open?host=...` for iOS Blink, `ssh://user@host` for others) that attaches as a `view` action button on the timeout notification — one tap gets you to the terminal session after a missed prompt; approval notifications stay at 3 buttons (Allow/Deny/Retry) unchanged
+- [x] **SSH deep link on timeout notification** — when the prompt expires, the timeout notification gains an **SSH In** `view` button if `HOOKLINE_SSH_URL` is set (`ssh://user@host` for Android/ConnectBot, `blinkshell://open?host=...` for iOS Blink); one tap drops you into the terminal session after a missed prompt; approval notifications stay at 3 buttons (Allow/Deny/Retry) unchanged. **Note:** Termux can't handle `ssh://` URLs directly (the `RUN_COMMAND` broadcast route needs typed intent extras that ntfy can't send without a Tasker/MacroDroid bridge), so ConnectBot or similar is the reliable Android handler. The setup wizard asks which client/platform and writes the right URL scheme.
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 

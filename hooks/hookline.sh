@@ -186,12 +186,16 @@ fi
     [ -z "$_topic" ] && return
     local _auth=()
     [ -n "$HOOKLINE_NTFY_USERNAME" ] && _auth=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+    # Optional "SSH In" button — opens a configured ssh:// (or blinkshell://, etc.) URL
+    # in whatever client handles it, dropping you straight into the tmux session.
     curl -s "${_auth[@]}" -H "Content-Type: application/json" \
       -d "$(jq -nc \
         --arg topic "$_topic" \
         --arg title "[$PROJECT] Prompt expired" \
         --arg message "No response after ${PHONE_TIMEOUT}s — Claude is waiting at the terminal" \
-        '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
+        --arg ssh_url "${HOOKLINE_SSH_URL:-}" \
+        '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}
+         + (if $ssh_url != "" then {actions:[{action:"view",label:"SSH In",url:$ssh_url,clear:true}]} else {} end)')" \
       "${_server}/" &>/dev/null
   }
 
