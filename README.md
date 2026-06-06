@@ -102,6 +102,8 @@ Changes take effect immediately — no reinstall needed.
 
 ```bash
 hookline status               # show config, daemon status, connectivity, recent log
+hookline topic                # show the current ntfy topic
+hookline topic <name>         # switch topic, update config, restart daemon
 hookline daemon start         # start the daemon
 hookline daemon stop          # stop the daemon
 hookline daemon restart       # restart the daemon

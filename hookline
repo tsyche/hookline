@@ -17,12 +17,52 @@ usage: hookline <command>
 
 Commands:
   status          Show config, hook registration, daemon status, connectivity
+  topic [name]    Show current topic, or switch to a new one and restart daemon
   daemon start    Start the hookline daemon (registers with launchd)
   daemon stop     Stop the daemon
   daemon restart  Restart the daemon
   daemon status   Show daemon status
   help            Show this help
 EOF
+}
+
+# ── topic ───────────────────────────────────────────────────────────────────
+
+cmd_topic() {
+  local new_topic="$1"
+
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "config not found — run install.sh first"
+    return 1
+  fi
+
+  # No argument: print current topic
+  if [ -z "$new_topic" ]; then
+    source "$CONFIG_FILE" 2>/dev/null
+    echo "current topic: ${HOOKLINE_TOPIC:-"(not set)"}"
+    return 0
+  fi
+
+  # Reject whitespace/invalid topic names (ntfy allows [-_A-Za-z0-9])
+  if ! [[ "$new_topic" =~ ^[-_A-Za-z0-9]+$ ]]; then
+    echo "invalid topic '$new_topic' — use only letters, numbers, '-' and '_'"
+    return 1
+  fi
+
+  if grep -q '^HOOKLINE_TOPIC=' "$CONFIG_FILE"; then
+    sed -i '' "s|^HOOKLINE_TOPIC=.*|HOOKLINE_TOPIC=\"${new_topic}\"|" "$CONFIG_FILE"
+  else
+    printf 'HOOKLINE_TOPIC="%s"\n' "$new_topic" >> "$CONFIG_FILE"
+  fi
+  echo "topic set to '$new_topic'"
+
+  if daemon_running; then
+    echo "restarting daemon to pick up new topic..."
+    cmd_daemon restart
+  fi
+
+  echo
+  echo "→ Subscribe to '${new_topic}' (and '${new_topic}-response') in the ntfy app."
 }
 
 # ── daemon helpers ─────────────────────────────────────────────────────────────
@@ -181,6 +221,7 @@ cmd_status() {
 
 case "${1:-help}" in
   status)         cmd_status ;;
+  topic)          shift; cmd_topic "$@" ;;
   daemon)         shift; cmd_daemon "$@" ;;
   help|--help|-h) usage ;;
   *) echo "hookline: unknown command '$1'"; echo; usage; exit 1 ;;

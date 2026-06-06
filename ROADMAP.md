@@ -33,6 +33,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - [x] **hookline daemon** — persistent Python daemon with SSE connection for instant phone response (no polling delay); session registry maps session IDs to TTY/terminal/tmux pane; response file IPC keeps keystroke injection in the hook's process tree (no extra macOS accessibility permissions); graceful fallback to inline polling when daemon is down
 - [x] **Multi-terminal injection** — iTerm2, Terminal.app, WezTerm via AppleScript; tmux via `send-keys` (focus-independent); frontmost-app fallback for others
 - [x] **Zombie prevention** — per-session lock file (parent writes `$!`), conditional EXIT trap, max retry cap, global ntfy throttle
+- [x] **`hookline topic` command** — `hookline topic` shows the current topic; `hookline topic <name>` validates the name, rewrites `HOOKLINE_TOPIC` in config, and restarts the daemon in one step (avoids manual config editing when switching topics after an ntfy ban)
 
 1. **Setup wizard** (~2–3h)
    - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
@@ -45,22 +46,17 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - All paths end with a live test notification so user knows it works before they walk away
    - Reruns cleanly to switch transports later
 
-2. **`hookline topic` command** (~30 min)
-   - `hookline topic <name>` — update topic in config and restart daemon in one step
-   - Avoids manual config editing when switching topics (e.g., after an ntfy ban)
-   - Quick win; solves a real recurring pain point
-
-3. **AskUserQuestion hook** (~3–4h)
+2. **AskUserQuestion hook** (~3–4h)
    - Route Claude's interactive questions to phone with multi-button answers
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
 
-4. **Pattern management CLI** (~2–3h)
+3. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-5. **CONTRIBUTING.md + CI** (~1–2h)
+4. **CONTRIBUTING.md + CI** (~1–2h)
    - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
    - GitHub Actions: `shellcheck` on hookline.sh and install.sh to catch syntax errors before release
    - Essential for a FOSS project inviting contributions; low effort, high community signal
