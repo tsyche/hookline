@@ -11,6 +11,12 @@ PLIST_LABEL="com.hookline.daemon"
 PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 SETTINGS="${HOME}/.claude/settings.json"
 
+# Asdf-proof Python — a bare `python3` resolves to an asdf shim in directories
+# with a .tool-versions pointing at an uninstalled version, which makes the
+# daemon status query falsely report "NOT running". Prefer the absolute path.
+PYBIN="/usr/bin/python3"
+[ -x "$PYBIN" ] || PYBIN="$(command -v python3)"
+
 usage() {
   cat <<EOF
 usage: hookline <command>
@@ -68,7 +74,7 @@ cmd_topic() {
 # ── daemon helpers ─────────────────────────────────────────────────────────────
 
 daemon_query() {
-  python3 -c "
+  "$PYBIN" -c "
 import socket, json, sys
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(3)
@@ -92,7 +98,7 @@ cmd_daemon() {
   local subcmd="${1:-status}"
   case "$subcmd" in
     _run)
-      exec python3 "$DAEMON_DST" start
+      exec "$PYBIN" "$DAEMON_DST" start
       ;;
 
     start)
@@ -132,9 +138,9 @@ cmd_daemon() {
       echo "── Daemon"
       if daemon_running; then
         info=$(daemon_query)
-        pid=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pid','?'))" 2>/dev/null)
-        sessions=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('sessions',0))" 2>/dev/null)
-        pending=$(echo "$info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pending',0))" 2>/dev/null)
+        pid=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('pid','?'))" 2>/dev/null)
+        sessions=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('sessions',0))" 2>/dev/null)
+        pending=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('pending',0))" 2>/dev/null)
         echo "  running ✓  pid=$pid  sessions=$sessions  pending=$pending"
       elif [ -f "$PLIST_DST" ]; then
         echo "  NOT running (installed, not started — run: hookline daemon start)"

@@ -62,6 +62,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## v1.3 — Medium-term
 
+- **Daemon health watchdog** — `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days. The hook now falls back to legacy polling when the daemon is unresponsive (so notifications still fire), but the instant-SSE path stays degraded until a manual restart. Add a heartbeat: daemon touches a timestamp file each loop; a lightweight check (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or swap to a maintained SSE client)
 - **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
 - **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks

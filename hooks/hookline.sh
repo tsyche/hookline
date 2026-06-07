@@ -11,13 +11,19 @@ DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
 SETTINGS_LOCAL="${CWD:+$CWD/../.claude/settings.local.json}"
 SETTINGS_LOCAL="${SETTINGS_LOCAL:-${HOME}/.claude/settings.local.json}"
 
+# Resolve an asdf-proof Python. A bare `python3` resolves to an asdf shim in
+# any directory with a .tool-versions pointing at an uninstalled version — which
+# breaks the daemon handoff silently. Prefer the absolute system interpreter.
+PYBIN="/usr/bin/python3"
+[ -x "$PYBIN" ] || PYBIN="$(command -v python3)"
+
 log() {
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${REQ_ID:-init}" "$*" >> "$LOG_FILE"
 }
 
 # Send a JSON message to the daemon socket; returns 0 on success.
 daemon_send() {
-  python3 -c "
+  "$PYBIN" -c "
 import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(3)
@@ -32,6 +38,29 @@ except:
 finally:
     s.close()
 " <<< "$1" 2>/dev/null
+}
+
+# True only if the daemon is actually responsive — not merely that a (possibly
+# stale) socket file exists. Guards against a hung daemon swallowing handoffs.
+daemon_alive() {
+  [ -S "$DAEMON_SOCK" ] || return 1
+  local resp
+  resp=$("$PYBIN" -c "
+import socket, json, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+try:
+    s.connect('${DAEMON_SOCK}')
+    s.sendall(json.dumps({'type':'status'}).encode())
+    s.shutdown(socket.SHUT_WR)
+    sys.stdout.write(s.recv(4096).decode())
+    sys.exit(0)
+except:
+    sys.exit(1)
+finally:
+    s.close()
+" 2>/dev/null)
+  [[ "$resp" == *'"pid"'* ]]
 }
 
 source "$CONFIG_FILE" 2>/dev/null || { echo "config not found"; exit 0; }
@@ -113,7 +142,7 @@ PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
 MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-3}"
 
 # 4. Register session with daemon (captures TTY + terminal info for routing)
-if [ -S "$DAEMON_SOCK" ]; then
+if daemon_alive; then
   TMUX_PANE_ID="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null)}"
   daemon_send "$(jq -nc \
     --arg type "register" \
@@ -196,7 +225,7 @@ fi
   }
 
   # — Daemon path —
-  if [ -S "$DAEMON_SOCK" ]; then
+  if daemon_alive; then
     log "background: daemon available, handing off notification"
     RESPONSE_FILE="/tmp/hookline-resp-${REQ_ID}"
     trap 'rm -f "$RESPONSE_FILE"; [[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$BASHPID" ]] && rm -f "$LOCK_FILE"' EXIT
