@@ -181,32 +181,37 @@ fi
   log "background: no new transcript lines, user likely away"
 
   inject_keystroke() {
-    local key="$1"
+    local action="$1"   # "allow" or "deny"
     local label="$2"
-    log "background: injecting keystroke '$key' + Enter ($label) via ${TERM_PROGRAM:-unknown}"
+    # allow → type "1" + Enter (option 1 is always "Yes")
+    # deny  → Escape (key code 53), which cancels the prompt regardless of how
+    #         many options the menu has — "3" breaks on 2-option menus.
+    local proc=""
     case "${TERM_PROGRAM:-}" in
-      iTerm.app)
-        osascript \
-          -e "tell application \"System Events\" to tell process \"iTerm2\" to keystroke \"$key\"" \
-          -e "tell application \"System Events\" to tell process \"iTerm2\" to key code 36" \
-          2>/dev/null ;;
-      Apple_Terminal)
-        osascript \
-          -e "tell application \"System Events\" to tell process \"Terminal\" to keystroke \"$key\"" \
-          -e "tell application \"System Events\" to tell process \"Terminal\" to key code 36" \
-          2>/dev/null ;;
-      WezTerm)
-        osascript \
-          -e "tell application \"System Events\" to tell process \"WezTerm\" to keystroke \"$key\"" \
-          -e "tell application \"System Events\" to tell process \"WezTerm\" to key code 36" \
-          2>/dev/null ;;
-      *)
-        # Fallback: target frontmost app (works for most terminals on macOS)
-        osascript \
-          -e "tell application \"System Events\" to keystroke \"$key\"" \
-          -e "tell application \"System Events\" to key code 36" \
-          2>/dev/null ;;
+      iTerm.app)      proc="iTerm2" ;;
+      Apple_Terminal) proc="Terminal" ;;
+      WezTerm)        proc="WezTerm" ;;
     esac
+    log "background: injecting '$action' ($label) via ${TERM_PROGRAM:-frontmost}"
+    if [ "$action" = "deny" ]; then
+      if [ -n "$proc" ]; then
+        osascript -e "tell application \"System Events\" to tell process \"$proc\" to key code 53" 2>/dev/null
+      else
+        osascript -e "tell application \"System Events\" to key code 53" 2>/dev/null
+      fi
+    else
+      if [ -n "$proc" ]; then
+        osascript \
+          -e "tell application \"System Events\" to tell process \"$proc\" to keystroke \"1\"" \
+          -e "tell application \"System Events\" to tell process \"$proc\" to key code 36" \
+          2>/dev/null
+      else
+        osascript \
+          -e "tell application \"System Events\" to keystroke \"1\"" \
+          -e "tell application \"System Events\" to key code 36" \
+          2>/dev/null
+      fi
+    fi
   }
 
   send_timeout_notification() {
@@ -274,10 +279,10 @@ fi
       log "background: daemon response: $decision"
 
       if [ "$decision" = "allow" ]; then
-        inject_keystroke "1" "Allow"
+        inject_keystroke "allow" "Allow"
         exit 0
       elif [ "$decision" = "deny" ]; then
-        inject_keystroke "3" "Deny"
+        inject_keystroke "deny" "Deny"
         exit 0
       elif [ "$decision" = "retry" ]; then
         retries=$((retries + 1))
@@ -356,9 +361,9 @@ fi
   while true; do
     if send_notification "$current_req"; then
       if [ "$DECISION" = "allow" ]; then
-        inject_keystroke "1" "Allow"; break
+        inject_keystroke "allow" "Allow"; break
       elif [ "$DECISION" = "deny" ]; then
-        inject_keystroke "3" "Deny"; break
+        inject_keystroke "deny" "Deny"; break
       elif [ "$DECISION" = "retry" ]; then
         retries=$((retries + 1))
         if [ "$retries" -ge "$MAX_RETRIES" ]; then

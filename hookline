@@ -111,7 +111,12 @@ cmd_daemon() {
         return 1
       fi
       launchctl load "$PLIST_DST" 2>/dev/null
-      sleep 1
+      # Poll for up to ~5s — the daemon needs a moment to bind the socket and
+      # start answering status queries; a single short sleep gives false negatives.
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        daemon_running && break
+        sleep 0.5
+      done
       if daemon_running; then
         echo "daemon started ✓"
       else
