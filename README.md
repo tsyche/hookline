@@ -79,22 +79,7 @@ HOOKLINE_PHONE_TIMEOUT=900              # seconds to wait for phone response (15
 HOOKLINE_MAX_RETRIES=3                   # number of Retry button taps allowed
 HOOKLINE_NTFY_USERNAME=""               # for self-hosted ntfy with auth
 HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
-HOOKLINE_SSH_URL=""                      # optional — adds an "SSH In" button to the timeout notification
 ```
-
-### SSH In button
-
-If `HOOKLINE_SSH_URL` is set, the **prompt-expired** notification (sent when a request times out
-with no response) gains an **SSH In** button. Tapping it opens the URL in whatever client handles
-it, dropping you straight into your terminal session. Examples:
-
-| Client | Platform | URL |
-|--------|----------|-----|
-| ConnectBot | Android | `ssh://user@host` |
-| Blink Shell | iOS | `blinkshell://open?host=host&user=user` |
-
-On Android, install a client that registers the `ssh://` scheme (ConnectBot is FOSS and works well).
-Termux does not handle `ssh://` URLs directly.
 
 Changes take effect immediately — no reinstall needed.
 
