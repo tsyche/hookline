@@ -128,7 +128,7 @@ Removes the hook from Claude settings and installed files. Optionally removes co
 | WezTerm | AppleScript | Requires Accessibility permission for WezTerm |
 | Other | AppleScript (frontmost) | Targets whichever app is in focus |
 
-Keystroke injection is performed by the hook process (a child of your terminal), so macOS accessibility permissions are only needed for the terminal app itself — not for any background process.
+For the AppleScript terminals, keystroke injection is performed by the hook process (a child of your terminal), so macOS Accessibility permission is only needed for the terminal app itself — never for a background process. tmux injection uses `tmux send-keys` (run by the daemon) and needs no Accessibility permission at all.
 
 ## Security
 

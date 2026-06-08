@@ -45,24 +45,35 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - All paths end with a live test notification so user knows it works before they walk away
    - Reruns cleanly to switch transports later
 
-2. **AskUserQuestion hook** (~3–4h)
+2. **`hookline doctor` — diagnose & self-heal** (~1–2h)
+   - One command that checks the whole chain and fixes what it can: daemon liveness (real socket ping, not just process presence), resolved `python3`/`tmux` paths, launchd registration, stale socket files, ntfy reachability, topic subscription reminder
+   - Auto-restarts a hung/dead daemon; flags an asdf-shimmed `python3` that would break the hook
+   - Motivated by a multi-hour debugging session where a hung daemon + asdf-broken `python3` silently dropped notifications and `hookline status` gave a misleading "NOT running"
+   - Quick win; turns "why didn't I get notified?" into a single self-explaining command
+
+3. **Daemon health watchdog** (~2–3h)
+   - `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days
+   - The hook already falls back to legacy polling when the daemon is unresponsive (notifications still fire), but the instant-SSE path stays degraded until a manual restart
+   - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
+   - Promoted from v1.3 after silent notification loss bit the daily driver
+
+4. **AskUserQuestion hook** (~3–4h)
    - Route Claude's interactive questions to phone with multi-button answers
    - Split questions with >3 options across multiple notifications
    - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
 
-3. **Pattern management CLI** (~2–3h)
+5. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-4. **CONTRIBUTING.md + CI** (~1–2h)
+6. **CONTRIBUTING.md + CI** (~1–2h)
    - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
    - GitHub Actions: `shellcheck` on hookline.sh and install.sh to catch syntax errors before release
    - Essential for a FOSS project inviting contributions; low effort, high community signal
 
 ## v1.3 — Medium-term
 
-- **Daemon health watchdog** — `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days. The hook now falls back to legacy polling when the daemon is unresponsive (so notifications still fire), but the instant-SSE path stays degraded until a manual restart. Add a heartbeat: daemon touches a timestamp file each loop; a lightweight check (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or swap to a maintained SSE client)
 - **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
 - **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
