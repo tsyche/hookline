@@ -73,10 +73,23 @@ PROJECT=$(basename "$CWD" 2>/dev/null || echo "unknown")
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
+# Notification title label. Inside tmux, show "session / project" so the title
+# names both the terminal to switch to AND the codebase — Claude's reported CWD
+# can be stale (e.g. --resume restores an old dir) and collide with an unrelated
+# tmux session name. Outside tmux, just the project basename.
+TMUX_SESSION=""
+[ -n "${TMUX:-}" ] && TMUX_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+if [ -n "$TMUX_SESSION" ] && [ "$TMUX_SESSION" != "$PROJECT" ]; then
+  SESSION_LABEL="$TMUX_SESSION / $PROJECT"
+else
+  SESSION_LABEL="$PROJECT"
+fi
+
 REQ_ID="$(date +%s)-$$"
 PARENT_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
 
 log "=== PreToolUse hook fired ==="
+log "cwd: $CWD | project: $PROJECT | tmux_session: ${TMUX_SESSION:-none} | label: $SESSION_LABEL"
 log "tool: $TOOL_NAME | parent_tty: $PARENT_TTY"
 log "transcript_path: $TRANSCRIPT_PATH"
 log "session_id: $SESSION_ID"
@@ -223,7 +236,7 @@ fi
     curl -s "${_auth[@]}" -H "Content-Type: application/json" \
       -d "$(jq -nc \
         --arg topic "$_topic" \
-        --arg title "[$PROJECT] Prompt expired" \
+        --arg title "[$SESSION_LABEL] Prompt expired" \
         --arg message "No response after ${PHONE_TIMEOUT}s — Claude is waiting at the terminal" \
         '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
       "${_server}/" &>/dev/null
@@ -243,7 +256,7 @@ fi
         --arg type "notify" \
         --arg session_id "$SESSION_ID" \
         --arg req_id "$current_req_id" \
-        --arg title "[$PROJECT] $TOOL_NAME" \
+        --arg title "[$SESSION_LABEL] $TOOL_NAME" \
         --arg message "$NOTIFY_MSG" \
         --arg response_file "$RESPONSE_FILE" \
         --argjson max_retries "$MAX_RETRIES" \
@@ -321,7 +334,7 @@ fi
     curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
       -d "$(jq -nc \
         --arg topic "$TOPIC" \
-        --arg title "[$PROJECT] $TOOL_NAME" \
+        --arg title "[$SESSION_LABEL] $TOOL_NAME" \
         --arg message "$NOTIFY_MSG" \
         --arg url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
         '{topic:$topic,title:$title,message:$message,priority:4,tags:["lock"],
