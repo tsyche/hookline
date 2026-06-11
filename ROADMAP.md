@@ -1,5 +1,17 @@
 # hookline Roadmap
 
+> **Status: maintenance mode (2026-06).** Claude Code shipped a native remote-control /
+> mobile-approval feature that covers hookline's core use case. hookline still works and is
+> in use day-to-day for convenience, but **active feature development is paused** pending
+> evaluation of the native feature against the parity checklist below. If the native feature
+> covers grace-period silence, multi-session routing, and safe-prefix auto-approval, hookline
+> will be archived (`bash uninstall.sh` for a clean teardown). The backlog below is retained
+> as a record and is **only relevant if the project is kept** — do not treat it as active.
+>
+> **Parity checklist (does the native feature do these?):** away-approval · grace period (phone
+> stays silent if answered at terminal) · instant response · multi-session routing (which session?) ·
+> safe-prefix auto-approve · "always allow" persistence · no third-party relay (privacy).
+
 ## Goals
 
 hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account. Every feature beyond that is an opt-in upgrade — not a requirement.
