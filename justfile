@@ -35,3 +35,16 @@ daemon-stop:
 # Restart the background daemon
 daemon-restart:
     hookline daemon restart
+
+# Lint shell scripts (shellcheck) and syntax-check the Python daemon
+lint:
+    @command -v shellcheck >/dev/null || { echo "shellcheck not installed — run: brew install shellcheck"; exit 1; }
+    shellcheck hooks/hookline.sh install.sh uninstall.sh hookline scripts/test.sh
+    /usr/bin/python3 -m py_compile daemon/hookline-daemon
+    @echo "lint ok"
+
+# Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
+sync-docs:
+    @if [ AGENTS.md -nt CLAUDE.md ]; then cp AGENTS.md CLAUDE.md && echo "synced AGENTS.md -> CLAUDE.md"; \
+     elif [ CLAUDE.md -nt AGENTS.md ]; then cp CLAUDE.md AGENTS.md && echo "synced CLAUDE.md -> AGENTS.md"; \
+     else echo "already in sync"; fi
