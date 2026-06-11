@@ -95,7 +95,7 @@ if [ -f "$SETTINGS" ]; then
       .hooks //= {} |
       .hooks.PreToolUse //= [] |
       .hooks.PreToolUse += [{
-        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "matcher": "Bash|Edit|Write|NotebookEdit|AskUserQuestion",
         "hooks": [{"type": "command", "command": $hook, "timeout": 310}]
       }]
     ' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
@@ -104,7 +104,7 @@ if [ -f "$SETTINGS" ]; then
 else
   echo "Warning: $SETTINGS not found — register the hook manually."
   echo "Add to ~/.claude/settings.json:"
-  echo '  "hooks": {"PreToolUse": [{"matcher": "Bash|Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "'"$HOOK_DST"'", "timeout": 310}]}]}'
+  echo '  "hooks": {"PreToolUse": [{"matcher": "Bash|Edit|Write|NotebookEdit|AskUserQuestion", "hooks": [{"type": "command", "command": "'"$HOOK_DST"'", "timeout": 310}]}]}'
 fi
 
 echo

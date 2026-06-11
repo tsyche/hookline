@@ -132,9 +132,17 @@ if [ "$TOOL_NAME" = "Bash" ]; then
   fi
 fi
 
-# 2. Output ask — shows terminal permission prompt immediately
-log "OUTPUT: ask"
-jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask"}}'
+# 2. Output decision. AskUserQuestion is not a permission gate — it always shows
+#    its own multi-option picker — so defer rather than forcing a yes/no "ask".
+#    The background watcher still notifies and (on phone response) injects into
+#    the displayed picker. Everything else gets "ask" to surface the prompt.
+if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+  log "OUTPUT: defer (AskUserQuestion — multi-option picker)"
+  jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"defer"}}'
+else
+  log "OUTPUT: ask"
+  jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask"}}'
+fi
 
 # 3. Build notification message
 if [ "$TOOL_NAME" = "Bash" ]; then
@@ -146,6 +154,10 @@ elif [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Edit" ]; then
 elif [ "$TOOL_NAME" = "NotebookEdit" ]; then
   _path=$(echo "$INPUT" | jq -r '.tool_input.path // ""' 2>/dev/null)
   NOTIFY_MSG="NotebookEdit: $_path"
+elif [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+  # Multi-option question — warn that Allow picks option 1 and Deny dismisses.
+  _q=$(echo "$INPUT" | jq -r '.tool_input.questions[0].question // .tool_input.questions[0].header // "multi-option question"' 2>/dev/null)
+  NOTIFY_MSG="⚠️ ${_q:0:230} — Allow picks option 1, Deny dismisses"
 else
   NOTIFY_MSG="${TOOL_INPUT:0:300}"
 fi

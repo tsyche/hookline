@@ -26,7 +26,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## v1.1 — Stable
 
-- [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit
+- [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit, AskUserQuestion
 - [x] Instant terminal prompt — no delay for local users
 - [x] Transcript line-count detection for reliable local-answer detection
 - [x] Configurable grace period and phone timeout via `HOOKLINE_GRACE_PERIOD` / `HOOKLINE_PHONE_TIMEOUT`
@@ -69,10 +69,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
    - Promoted from v1.3 after silent notification loss bit the daily driver
 
-4. **AskUserQuestion hook** (~3–4h)
-   - Route Claude's interactive questions to phone with multi-button answers
-   - Split questions with >3 options across multiple notifications
-   - Matches [claude-remote-approver](https://github.com/yuuichieguchi/claude-remote-approver) feature parity
+4. ~~**AskUserQuestion hook**~~ ✅ — warning notification sent with first-option-or-dismiss behavior; `defer` keeps Claude's own picker visible while Allow injects `1`+Enter and Deny injects Escape
 
 5. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
