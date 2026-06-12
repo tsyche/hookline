@@ -8,8 +8,10 @@
 CONFIG_FILE="${HOME}/.config/hookline/config"
 LOG_FILE="${HOME}/.local/share/hookline/hookline.log"
 DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
-SETTINGS_LOCAL="${CWD:+$CWD/../.claude/settings.local.json}"
+SETTINGS_GLOBAL="${HOME}/.claude/settings.json"
+SETTINGS_LOCAL="${CWD:+$CWD/.claude/settings.local.json}"
 SETTINGS_LOCAL="${SETTINGS_LOCAL:-${HOME}/.claude/settings.local.json}"
+DISABLED_FLAG="${HOME}/.config/hookline/disabled"
 
 # Resolve an asdf-proof Python. A bare `python3` resolves to an asdf shim in
 # any directory with a .tool-versions pointing at an uninstalled version — which
@@ -65,6 +67,11 @@ finally:
 
 source "$CONFIG_FILE" 2>/dev/null || { echo "config not found"; exit 0; }
 
+if [ -f "$DISABLED_FLAG" ]; then
+  jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"defer"}}'
+  exit 0
+fi
+
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "Unknown"')
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // {} | tostring' | head -c 300)
@@ -110,26 +117,27 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     fi
   done
 
-  if [ -f "$SETTINGS_LOCAL" ]; then
-    patterns=$(jq -r '.permissions.allow[] | select(startswith("Bash(")) | sub("Bash\\("; "") | sub("\\)$"; "")' "$SETTINGS_LOCAL" 2>/dev/null)
+  for _settings_file in "$SETTINGS_GLOBAL" "$SETTINGS_LOCAL"; do
+    [ -f "$_settings_file" ] || continue
+    patterns=$(jq -r '.permissions.allow[] | select(startswith("Bash(")) | sub("Bash\\("; "") | sub("\\)$"; "")' "$_settings_file" 2>/dev/null)
     while IFS= read -r pattern; do
       [ -z "$pattern" ] && continue
       if [[ "$pattern" == *\* ]]; then
         prefix="${pattern%\*}"
         if [[ "$cmd" == "$prefix"* ]]; then
-          log "matches allowlist pattern: Bash($pattern) → defer silently"
+          log "matches allowlist pattern in $_settings_file: Bash($pattern) → defer silently"
           jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"defer"}}'
           exit 0
         fi
       else
         if [ "$cmd" = "$pattern" ]; then
-          log "matches allowlist pattern (exact): Bash($pattern) → defer silently"
+          log "matches allowlist pattern (exact) in $_settings_file: Bash($pattern) → defer silently"
           jq -nc '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"defer"}}'
           exit 0
         fi
       fi
     done <<< "$patterns"
-  fi
+  done
 fi
 
 # 2. Output decision. AskUserQuestion is not a permission gate — it always shows
