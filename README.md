@@ -27,7 +27,7 @@ Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code
 ## Install
 
 ```bash
-git clone https://github.com/yourusername/hookline.git
+git clone https://github.com/tsyche/hookline.git
 cd hookline
 bash install.sh
 ```
