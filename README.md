@@ -1,5 +1,7 @@
 # hookline
 
+[![ci](https://github.com/tsyche/hookline/actions/workflows/ci.yml/badge.svg)](https://github.com/tsyche/hookline/actions/workflows/ci.yml)
+
 Approve [Claude Code](https://docs.anthropic.com/en/docs/claude-code) permission prompts from your phone via [ntfy.sh](https://ntfy.sh).
 
 When Claude needs permission to run a tool, the terminal prompt appears instantly. If you answer at the terminal, your phone is never notified. If you walk away, a push notification arrives on your phone after a 20-second grace period — tap to respond, and the terminal prompt auto-dismisses.

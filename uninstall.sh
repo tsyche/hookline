@@ -2,7 +2,6 @@
 set -e
 
 HOOK_DST="${HOME}/.local/share/hookline/hooks/hookline.sh"
-CONFIG_FILE="${HOME}/.config/hookline/config"
 SETTINGS="${HOME}/.claude/settings.json"
 
 echo "=== hookline uninstaller ==="

@@ -59,6 +59,7 @@ cmd_topic() {
 
   # No argument: print current topic
   if [ -z "$new_topic" ]; then
+    # shellcheck source=/dev/null
     source "$CONFIG_FILE" 2>/dev/null
     echo "current topic: ${HOOKLINE_TOPIC:-"(not set)"}"
     return 0
@@ -193,6 +194,7 @@ cmd_status() {
 
   echo "── Config ($CONFIG_FILE)"
   if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
     source "$CONFIG_FILE" 2>/dev/null
     echo "  topic:         ${HOOKLINE_TOPIC:-"(not set)"}"
     echo "  server:        ${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"

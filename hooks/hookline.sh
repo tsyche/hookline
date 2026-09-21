@@ -65,6 +65,7 @@ finally:
   [[ "$resp" == *'"pid"'* ]]
 }
 
+# shellcheck source=/dev/null
 source "$CONFIG_FILE" 2>/dev/null || { echo "config not found"; exit 0; }
 
 if [ -f "$DISABLED_FLAG" ]; then
@@ -351,7 +352,7 @@ fi
     log "background: sending notification..."
     AUTH_ARGS=()
     [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
-    curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
+    ntfy_resp=$(curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
       -d "$(jq -nc \
         --arg topic "$TOPIC" \
         --arg title "[$SESSION_LABEL] $TOOL_NAME" \
@@ -362,8 +363,8 @@ fi
             {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'"$req_id"'"},
             {action:"http",label:"Deny", url:$url,method:"POST",body:"deny|'"$req_id"'"},
             {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'"$req_id"'"}
-          ]}')" "${NTFY_SERVER}/" > /tmp/ntfy-resp-${req_id}.json 2>&1
-    response_id=$(jq -r '.id // "NO_ID"' /tmp/ntfy-resp-${req_id}.json 2>/dev/null)
+          ]}')" "${NTFY_SERVER}/" 2>&1)
+    response_id=$(jq -r '.id // "NO_ID"' <<<"$ntfy_resp" 2>/dev/null)
     log "notification sent, response id: $response_id"
 
     DECISION=""

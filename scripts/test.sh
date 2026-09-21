@@ -2,6 +2,7 @@
 # Send a test notification to verify hookline is wired up correctly
 
 CONFIG_FILE="${HOME}/.config/hookline/config"
+# shellcheck source=/dev/null
 source "$CONFIG_FILE" 2>/dev/null || { echo "Config not found. Run install.sh first."; exit 1; }
 
 TOPIC="${HOOKLINE_TOPIC:?HOOKLINE_TOPIC not set}"
@@ -23,8 +24,8 @@ curl -s -H "Content-Type: application/json" \
       priority: 4,
       tags: ["white_check_mark"],
       actions: [
-        {action:"http", label:"Allow", url:$url, method:"POST", body:("allow|" + "'$REQ_ID'")},
-        {action:"http", label:"Deny",  url:$url, method:"POST", body:("deny|"  + "'$REQ_ID'")}
+        {action:"http", label:"Allow", url:$url, method:"POST", body:("allow|" + "'"$REQ_ID"'")},
+        {action:"http", label:"Deny",  url:$url, method:"POST", body:("deny|"  + "'"$REQ_ID"'")}
       ]
     }')" "${SERVER}/" | jq -r '.id // "failed"'
 

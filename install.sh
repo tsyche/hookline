@@ -36,6 +36,7 @@ mkdir -p "$(dirname "$HOOK_DST")" "$(dirname "$DAEMON_DST")" "$CONFIG_DIR" "$LOG
 
 # Configure topic
 if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
   source "$CONFIG_FILE"
 fi
 
