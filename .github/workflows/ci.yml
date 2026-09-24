@@ -16,5 +16,5 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       - run: just lint
