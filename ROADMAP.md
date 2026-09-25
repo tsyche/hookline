@@ -1,16 +1,21 @@
 # hookline Roadmap
 
-> **Status: maintenance mode (2026-06).** Claude Code shipped a native remote-control /
-> mobile-approval feature that covers hookline's core use case. hookline still works and is
-> in use day-to-day for convenience, but **active feature development is paused** pending
-> evaluation of the native feature against the parity checklist below. If the native feature
-> covers grace-period silence, multi-session routing, and safe-prefix auto-approval, hookline
-> will be archived (`bash uninstall.sh` for a clean teardown). The backlog below is retained
-> as a record and is **only relevant if the project is kept** — do not treat it as active.
+> **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
+> (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
+> **claude only**. The revival: the same phone-approval UX for every agent the `ai` alias can
+> launch (claude · codex · grok · opencode · blackbox) via a provider registry + adapter
+> architecture. See the [multi-provider plan](~/.claude/plans/hookline-multi-provider.md)
+> for decisions, phases, and gates.
 >
-> **Parity checklist (does the native feature do these?):** away-approval · grace period (phone
-> stays silent if answered at terminal) · instant response · multi-session routing (which session?) ·
-> safe-prefix auto-approve · "always allow" persistence · no third-party relay (privacy).
+> **Parity note:** for claude, native remote approvals are the primary path — hookline's claude
+> adapter stays installed but **default-off** as a toggleable backup. For every other provider,
+> hookline is the only approval path. The old parity checklist (away-approval · grace period ·
+> instant response · multi-session routing · safe-prefix auto-approve · "always allow"
+> persistence · no third-party relay) now applies per-provider rather than as an
+> archive-or-keep test for the whole project.
+
+> **Backlog status:** the v1.1–v1.4 items below are unchanged and not yet re-triaged under the
+> multi-provider architecture — that happens after Phase 4 (docs/wording sweep).
 
 ## Goals
 
