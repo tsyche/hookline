@@ -8,19 +8,24 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
 
 ## Stack
 
-- **Hook** (`hooks/hookline.sh`) — Bash. Fires on `PreToolUse`, handles grace period,
-  safe-prefix allowlist, and keystroke injection for AppleScript terminals.
+- **Hook** (`hooks/hookline.sh` entry → `hooks/core.sh` + `hooks/adapters/<provider>.sh`) —
+  Bash. Entry resolves the provider (`hookline.sh [provider]`, default `claude`, `blackbox`
+  rides the claude adapter), gates on `HOOKLINE_PROVIDERS`, then core runs grace period,
+  safe-prefix allowlist, and daemon handoff; the adapter translates payload, decision JSON,
+  allowlist source, progress signal, and keystroke injection.
 - **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only). Persistent SSE
   connection to ntfy for instant phone responses; injects into tmux via `tmux send-keys`.
   Managed by launchd (`daemon/com.hookline.daemon.plist`).
 - **CLI** (`hookline`) — Bash. `status`, `topic`, `daemon start/stop/restart/status`.
-- **Install/uninstall** (`install.sh`, `uninstall.sh`), **test** (`scripts/test.sh`).
+- **Install/uninstall** (`install.sh`, `uninstall.sh`), **tests** (`scripts/test.sh`,
+  `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network).
 
 ## Key commands
 
 ```bash
 just install        # install hook, daemon, CLI, launchd registration
 just test           # send a test notification
+just golden         # hook stdout contract tests (sandboxed, no network)
 just status         # config, daemon status, connectivity, recent log
 just lint           # shellcheck the shell scripts + py_compile the daemon
 just logs           # tail hook + daemon logs
@@ -40,6 +45,11 @@ just uninstall      # remove everything
 
 ## Config & data
 
-- Config: `~/.config/hookline/config` (not tracked)
-- Installed runtime: `~/.local/share/hookline/` (hook, daemon, socket, logs)
-- Hook registration: `~/.claude/settings.json`
+- Config: `~/.config/hookline/config` (not tracked) — `HOOKLINE_PROVIDERS="blackbox opencode"`
+  gates which registrations fire (unset = all enabled); `hookline.sh <provider>` is what the
+  settings entry passes
+- Installed runtime: `~/.local/share/hookline/` (hooks dir = entry + core + adapters,
+  daemon, socket, logs)
+- Hook registration: `~/.claude/settings.json` (provider `claude`) and
+  `~/.claude-bb/settings.json` (provider `blackbox`); each registration is an inverse pair
+  with install/uninstall

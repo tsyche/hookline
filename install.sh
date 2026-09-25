@@ -2,7 +2,7 @@
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-HOOK_SRC="${REPO}/hooks/hookline.sh"
+HOOK_SRC_DIR="${REPO}/hooks"
 HOOK_DST="${HOME}/.local/share/hookline/hooks/hookline.sh"
 DAEMON_SRC="${REPO}/daemon/hookline-daemon"
 DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
@@ -13,6 +13,10 @@ CONFIG_DIR="${HOME}/.config/hookline"
 CONFIG_FILE="${CONFIG_DIR}/config"
 LOG_DIR="${HOME}/.local/share/hookline"
 SETTINGS="${HOME}/.claude/settings.json"
+SETTINGS_BB="${HOME}/.claude-bb/settings.json"
+
+# shellcheck source=/dev/null
+source "${HOOK_SRC_DIR}/adapters/claude.sh"   # for ADAPTER_MATCHER
 
 echo "=== hookline installer ==="
 echo
@@ -57,20 +61,33 @@ HOOKLINE_NTFY_SERVER="https://ntfy.sh"
 HOOKLINE_GRACE_PERIOD=20
 HOOKLINE_PHONE_TIMEOUT=900
 EOF
+# Preserve an existing provider registry across reinstalls (Phase 3 rewrites
+# this deliberately; a plain reinstall must not silently enable everything).
+if [ -n "${HOOKLINE_PROVIDERS:-}" ]; then
+  printf 'HOOKLINE_PROVIDERS="%s"\n' "$HOOKLINE_PROVIDERS" >> "$CONFIG_FILE"
+fi
 chmod 600 "$CONFIG_FILE"
 echo "Config written to $CONFIG_FILE"
 
-# Install hook
-cp "$HOOK_SRC" "$HOOK_DST"
+# Install hook (entry + core + adapters)
+cp -R "${HOOK_SRC_DIR}/." "$(dirname "$HOOK_DST")/"
 chmod +x "$HOOK_DST"
-echo "Hook installed to $HOOK_DST"
+echo "Hook installed to $(dirname "$HOOK_DST")"
 
-# Install CLI
+# Install CLI. Fall back to ~/.local/bin when /usr/local/bin isn't writable —
+# the launchd plist execs this path, so a silent copy failure means the daemon
+# exits 78 in a KeepAlive loop while install still reports success.
 CLI_SRC="${REPO}/hookline"
 CLI_DST="/usr/local/bin/hookline"
 if [ -f "$CLI_SRC" ]; then
-  cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST" && echo "CLI installed to $CLI_DST" \
-    || echo "Warning: could not install to $CLI_DST (try sudo). Run ./hookline directly instead."
+  if cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST"; then
+    echo "CLI installed to $CLI_DST"
+  else
+    CLI_DST="${HOME}/.local/bin/hookline"
+    mkdir -p "$(dirname "$CLI_DST")"
+    cp "$CLI_SRC" "$CLI_DST" && chmod +x "$CLI_DST"
+    echo "CLI installed to $CLI_DST (/usr/local/bin not writable — symlink if you want the classic path)"
+  fi
 fi
 
 # Install daemon
@@ -86,26 +103,55 @@ launchctl unload "$PLIST_DST" 2>/dev/null || true
 launchctl load "$PLIST_DST"
 echo "Daemon registered with launchd and started"
 
-# Register hook in Claude Code settings
-if [ -f "$SETTINGS" ]; then
-  # Check if hookline is already registered
-  if jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$SETTINGS" &>/dev/null; then
-    echo "Hook already registered in $SETTINGS"
+# Register the hook in a Claude-family settings file, keyed by provider. The
+# command passes the provider id so HOOKLINE_PROVIDERS can enable/disable each
+# registration independently; the `[ -x ]` guard keeps settings valid (and
+# silent) when the hook is not installed.
+register_provider() {
+  local settings="$1" provider="$2"
+  local hook_cmd="[ -x \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ${provider} || true"
+  [ -f "$settings" ] || return 1
+
+  if jq -e --arg cmd "$hook_cmd" '.hooks.PreToolUse[]?.hooks[]? | select(.command? == $cmd)' "$settings" &>/dev/null; then
+    echo "Hook already registered in $settings (provider: $provider)"
+  elif jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$settings" &>/dev/null; then
+    # Upgrade a pre-registry registration to the provider-aware command form.
+    jq --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
+      .hooks.PreToolUse |= map(
+        if ([.hooks[]?.command // ""] | any(contains("hookline")))
+        then (.matcher = $matcher |
+              .hooks |= map(if ((.command // "") | contains("hookline")) then .command = $cmd else . end))
+        else . end)
+    ' "$settings" > "${settings}.tmp" || return 1
+    mv "${settings}.tmp" "$settings" || return 1
+    echo "Hook registration upgraded in $settings (provider: $provider)"
   else
-    jq --arg hook "$HOOK_DST" '
+    jq --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
       .hooks //= {} |
       .hooks.PreToolUse //= [] |
       .hooks.PreToolUse += [{
-        "matcher": "Bash|Edit|Write|NotebookEdit|AskUserQuestion",
-        "hooks": [{"type": "command", "command": $hook, "timeout": 310}]
+        "matcher": $matcher,
+        "hooks": [{"type": "command", "command": $cmd, "timeout": 310}]
       }]
-    ' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-    echo "Hook registered in $SETTINGS"
+    ' "$settings" > "${settings}.tmp" || return 1
+    mv "${settings}.tmp" "$settings" || return 1
+    echo "Hook registered in $settings (provider: $provider)"
   fi
+}
+
+if register_provider "$SETTINGS" "claude"; then
+  :
 else
   echo "Warning: $SETTINGS not found — register the hook manually."
   echo "Add to ~/.claude/settings.json:"
-  echo '  "hooks": {"PreToolUse": [{"matcher": "Bash|Edit|Write|NotebookEdit|AskUserQuestion", "hooks": [{"type": "command", "command": "'"$HOOK_DST"'", "timeout": 310}]}]}'
+  # shellcheck disable=SC2016  # literal $HOME is intentional — expands at hook runtime
+  echo '  "hooks": {"PreToolUse": [{"matcher": "'"$ADAPTER_MATCHER"'", "hooks": [{"type": "command", "command": "[ -x \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"\$HOME/.local/share/hookline/hooks/hookline.sh\" claude || true", "timeout": 310}]}]}'
+fi
+
+# blackbox = same claude adapter, own settings file; skip silently if the
+# blackbox Claude config isn't present on this machine.
+if [ -f "$SETTINGS_BB" ]; then
+  register_provider "$SETTINGS_BB" "blackbox"
 fi
 
 echo

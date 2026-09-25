@@ -10,6 +10,7 @@ DAEMON_PID="${HOME}/.local/share/hookline/daemon.pid"
 PLIST_LABEL="com.hookline.daemon"
 PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 SETTINGS="${HOME}/.claude/settings.json"
+SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 DISABLED_FLAG="${HOME}/.config/hookline/disabled"
 
 # Asdf-proof Python — a bare `python3` resolves to an asdf shim in directories
@@ -201,6 +202,7 @@ cmd_status() {
     echo "  grace period:  ${HOOKLINE_GRACE_PERIOD:-20}s"
     echo "  phone timeout: ${HOOKLINE_PHONE_TIMEOUT:-60}s"
     echo "  max retries:   ${HOOKLINE_MAX_RETRIES:-3}"
+    echo "  providers:     ${HOOKLINE_PROVIDERS:-"(all — registry unset)"}"
     [ -n "$HOOKLINE_NTFY_USERNAME" ] && echo "  auth:          ${HOOKLINE_NTFY_USERNAME}@..."
   else
     echo "  NOT FOUND — run install.sh first"
@@ -210,17 +212,16 @@ cmd_status() {
   cmd_daemon status
   echo
 
-  echo "── Hook registration ($SETTINGS)"
-  if [ -f "$SETTINGS" ]; then
-    if jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$SETTINGS" &>/dev/null; then
+  for _settings in "$SETTINGS" "$SETTINGS_BB"; do
+    [ -f "$_settings" ] || continue
+    echo "── Hook registration ($_settings)"
+    if jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$_settings" &>/dev/null; then
       echo "  registered ✓"
     else
       echo "  NOT registered — run install.sh to register"
     fi
-  else
-    echo "  settings.json not found"
-  fi
-  echo
+    echo
+  done
 
   echo "── Hook file ($HOOK_DST)"
   if [ -f "$HOOK_DST" ]; then

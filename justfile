@@ -39,9 +39,13 @@ daemon-restart:
 # Lint shell scripts (shellcheck) and syntax-check the Python daemon
 lint:
     @command -v shellcheck >/dev/null || { echo "shellcheck not installed — run: brew install shellcheck"; exit 1; }
-    shellcheck hooks/hookline.sh install.sh uninstall.sh hookline scripts/test.sh
+    shellcheck hooks/hookline.sh hooks/core.sh hooks/adapters/*.sh install.sh uninstall.sh hookline scripts/test.sh scripts/hook-golden.sh
     /usr/bin/python3 -m py_compile daemon/hookline-daemon
     @echo "lint ok"
+
+# Golden stdout tests for the hook entry point (sandboxed, no network)
+golden:
+    bash scripts/hook-golden.sh
 
 # Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
 sync-docs:
