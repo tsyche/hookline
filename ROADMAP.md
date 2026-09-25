@@ -1,11 +1,21 @@
 # hookline Roadmap
 
+> **tl;dr:** active work only — shipped entries live in
+> [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
+> Multi-provider revival **Phases 0–4 shipped (2026-09-25)**; **next: v1.5 remote
+> control + end-to-end encryption**.
+
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
 > **claude only**. The revival: the same phone-approval UX for every agent the `ai` alias can
-> launch (claude · codex · grok · opencode · blackbox) via a provider registry + adapter
-> architecture. See the [multi-provider plan](~/.claude/plans/hookline-multi-provider.md)
-> for decisions, phases, and gates.
+> launch (claude · codex · grok · opencode · local custom providers) via a provider registry +
+> adapter architecture. See the [multi-provider plan](~/.claude/plans/hookline-multi-provider.md)
+> for decisions, phases, and gates. Shipped phases are archived in the
+> [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+>
+> **Naming rule:** app-facing text (README, roadmap, setup/status copy, docs) must never
+> name private local providers — use "local" / "custom". Concrete provider ids live only in
+> untracked config (`~/.config/hookline/config`) and the code that consumes them.
 >
 > **Parity note:** for claude, native remote approvals are the primary path — hookline's claude
 > adapter stays installed but **default-off** as a toggleable backup. For every other provider,
@@ -14,8 +24,8 @@
 > persistence · no third-party relay) now applies per-provider rather than as an
 > archive-or-keep test for the whole project.
 
-> **Backlog status:** the v1.1–v1.4 items below are unchanged and not yet re-triaged under the
-> multi-provider architecture — that happens after Phase 4 (docs/wording sweep).
+> **Backlog status:** Phase 4 (docs/wording sweep) landed 2026-09-25 — the v1.1–v1.4
+> backlog below is now due for re-triage under the multi-provider architecture.
 
 ## Goals
 
@@ -29,28 +39,13 @@ hookline should be installable and usable by anyone in under 5 minutes with noth
 
 The setup wizard is what makes all tiers accessible. It should ask the right questions, explain tradeoffs plainly, and handle configuration — no manual file editing required.
 
-## v1.1 — Stable
+## Shipped archive
 
-- [x] PreToolUse hook intercepts Bash, Edit, Write, NotebookEdit, AskUserQuestion
-- [x] Instant terminal prompt — no delay for local users
-- [x] Transcript line-count detection for reliable local-answer detection
-- [x] Configurable grace period and phone timeout via `HOOKLINE_GRACE_PERIOD` / `HOOKLINE_PHONE_TIMEOUT`
-- [x] ntfy.sh phone notifications with **Allow / Deny / Retry** buttons
-- [x] Human-readable notification messages (file paths, commands — not raw JSON)
-- [x] Keystroke injection to auto-dismiss terminal prompt when phone responds
-- [x] **Always Allow** from terminal saves pattern to project `settings.local.json` allowlist
-- [x] Built-in safe-command prefix auto-approval (echo, grep, cat, ls, etc.)
-- [x] Self-hosted ntfy support via `HOOKLINE_NTFY_SERVER`
-- [x] Install / uninstall / test scripts
+v1.1 (first stable) and the shipped v1.2 core — daemon, `status`/`topic` commands,
+multi-terminal injection, zombie prevention, AskUserQuestion hook, ntfy Basic Auth — moved
+to [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
 
-## v1.2 — Current (stable)
-
-- [x] **ntfy Basic Auth** — `HOOKLINE_NTFY_USERNAME` / `HOOKLINE_NTFY_PASSWORD` wired into all curl calls
-- [x] **`hookline status` command** — config, hook registration, daemon status, connectivity ping, last 10 log lines
-- [x] **hookline daemon** — persistent Python daemon with SSE connection for instant phone response (no polling delay); session registry maps session IDs to TTY/terminal/tmux pane; response file IPC keeps keystroke injection in the hook's process tree (no extra macOS accessibility permissions); graceful fallback to inline polling when daemon is down
-- [x] **Multi-terminal injection** — iTerm2, Terminal.app, WezTerm via AppleScript; tmux via `send-keys` (focus-independent); frontmost-app fallback for others
-- [x] **Zombie prevention** — per-session lock file (parent writes `$!`), conditional EXIT trap, max retry cap, global ntfy throttle
-- [x] **`hookline topic` command** — `hookline topic` shows the current topic; `hookline topic <name>` validates the name, rewrites `HOOKLINE_TOPIC` in config, and restarts the daemon in one step (avoids manual config editing when switching topics after an ntfy ban)
+## Backlog — next-up after v1.2
 
 1. **Setup wizard** (~2–3h)
    - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
@@ -74,16 +69,15 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
    - Promoted from v1.3 after silent notification loss bit the daily driver
 
-4. ~~**AskUserQuestion hook**~~ ✅ — warning notification sent with first-option-or-dismiss behavior; `defer` keeps Claude's own picker visible while Allow injects `1`+Enter and Deny injects Escape
-
-5. **Pattern management CLI** (~2–3h)
+4. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-6. **CONTRIBUTING.md + CI** (~1–2h)
+5. **CONTRIBUTING.md + CI** (~1–2h)
    - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
-   - GitHub Actions: `shellcheck` on hookline.sh and install.sh to catch syntax errors before release
+   - GitHub Actions: ~~`shellcheck` on hookline.sh and install.sh~~ ✅ CI runs `just lint`
+     (shellcheck + `py_compile`) on push/PR (`.github/workflows/ci.yml`); CONTRIBUTING.md still open
    - Essential for a FOSS project inviting contributions; low effort, high community signal
 
 ## v1.3 — Medium-term
@@ -108,6 +102,36 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **Always-deny patterns** — companion to allowlist for commands that should always be blocked
 - **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
 - **CHANGELOG** — versioned release notes; important signal of project health for FOSS adopters
+
+## v1.5 — Remote control (next)
+
+Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0–4.
+
+- [ ] **Full two-way remote control over ntfy** — chat parity with Claude's native remote,
+  for every non-Anthropic provider:
+  - *Input:* separate control topic → daemon routes per provider — terminal providers via
+    `tmux send-keys` (socket-aware path shipped in Phase 3), opencode via plugin →
+    `POST /session/{id}/message` (no injection needed)
+  - *Output:* `-log` topic as chat history — plugin relays `message.part.updated` deltas;
+    adapters tail the transcript; ntfy topic history = scrollback; pushes only for
+    "agent finished / needs you"
+  - *Phone input:* ntfy app has no inline text reply → iOS Shortcut/Siri action POSTs to
+    the control topic (ntfy app keeps the tap-approval buttons)
+  - *Watch-outs:* ntfy cache retention (~12h default), delta spam, multi-session targeting
+- [ ] **End-to-end encryption (E2E)** — protect conversation content itself:
+  - AES-256-GCM at the publisher (daemon + opencode plugin); plaintext never leaves the
+    machine; ntfy servers only ever see ciphertext
+  - Decrypt in a static reader page (WebCrypto; key pasted once → localStorage); page can
+    live anywhere since it never holds the key at rest
+  - ntfy notifications keep only sanitized titles (no command text) when encryption is on
+  - Separate control topic + ntfy auth — full remote control turns the topic into a remote
+    shell, auth is not optional
+  - Residual risk (documented): ntfy still sees metadata — timing, sizes, topic name;
+    self-hosted ntfy closes that too
+- [ ] **Generic provider naming in app-facing text** — setup/docs/status copy must never
+  name private local providers (use "local" / "custom"); concrete ids stay in untracked
+  config. Applied to README/ROADMAP/ledger 2026-09-25; verify future setup-wizard strings
+  and audit tracked agent docs (`AGENTS.md`/`CLAUDE.md`) for stragglers.
 
 ---
 

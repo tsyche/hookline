@@ -42,7 +42,7 @@ The installer will:
 4. Install the hook to `~/.local/share/hookline/hooks/hookline.sh`
 5. Install the daemon to `~/.local/share/hookline/daemon/hookline-daemon`
 6. Register the daemon with launchd (starts automatically on login)
-7. Register the hook in `~/.claude/settings.json` (and `~/.claude-bb/settings.json` for the `blackbox` profile, when present)
+7. Register the hook in `~/.claude/settings.json` (plus any additional claude-profile settings files detected on this machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
 
 Then open the ntfy app and subscribe to your topic (and `your-topic-response`).
