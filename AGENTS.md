@@ -13,6 +13,11 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   rides the claude adapter), gates on `HOOKLINE_PROVIDERS`, then core runs grace period,
   safe-prefix allowlist, and daemon handoff; the adapter translates payload, decision JSON,
   allowlist source, progress signal, and keystroke injection.
+- **opencode plugin** (`hooks/plugins/hookline.js` → `~/.config/opencode/plugins/hookline.js`) —
+  Node. Sees `permission.asked`, spawns `hookline.sh opencode` with the payload on stdin, and
+  answers the native prompt through a unix-socket bridge (opencode's serverUrl does not accept
+  plain TCP; only the in-process SDK client can reply). Appends a local-answer line on
+  `permission.replied` for the away-detection signal.
 - **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only). Persistent SSE
   connection to ntfy for instant phone responses; injects into tmux via `tmux send-keys`.
   Managed by launchd (`daemon/com.hookline.daemon.plist`).
@@ -52,4 +57,5 @@ just uninstall      # remove everything
   daemon, socket, logs)
 - Hook registration: `~/.claude/settings.json` (provider `claude`) and
   `~/.claude-bb/settings.json` (provider `blackbox`); each registration is an inverse pair
-  with install/uninstall
+  with install/uninstall. opencode registers differently — plugin file copied to
+  `~/.config/opencode/plugins/hookline.js` (no settings-JSON entry)

@@ -223,6 +223,15 @@ cmd_status() {
     echo
   done
 
+  OPC_PLUGIN="${HOME}/.config/opencode/plugins/hookline.js"
+  echo "── OpenCode plugin ($OPC_PLUGIN)"
+  if [ -f "$OPC_PLUGIN" ]; then
+    echo "  installed ✓"
+  else
+    echo "  NOT installed — run install.sh to register"
+  fi
+  echo
+
   echo "── Hook file ($HOOK_DST)"
   if [ -f "$HOOK_DST" ]; then
     echo "  installed ✓  ($(wc -l < "$HOOK_DST" | tr -d ' ') lines)"

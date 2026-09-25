@@ -20,6 +20,13 @@ done
 rm -rf "$HOOK_DIR_DST"
 echo "Removed $HOOK_DIR_DST"
 
+# Remove the opencode plugin registration (opencode's own config is untouched)
+OPC_PLUGIN="${HOME}/.config/opencode/plugins/hookline.js"
+if [ -f "$OPC_PLUGIN" ]; then
+  rm -f "$OPC_PLUGIN"
+  echo "Removed $OPC_PLUGIN"
+fi
+
 # Optionally remove config
 echo -n "Remove config and logs at ~/.config/hookline and ~/.local/share/hookline? [y/N] "
 read -r confirm

@@ -74,6 +74,16 @@ cp -R "${HOOK_SRC_DIR}/." "$(dirname "$HOOK_DST")/"
 chmod +x "$HOOK_DST"
 echo "Hook installed to $(dirname "$HOOK_DST")"
 
+# Register with opencode by dropping the plugin into its auto-loaded global
+# plugin directory — no opencode.jsonc edit, so the agentrc-managed config is
+# never touched. Skipped when opencode itself isn't present on this machine.
+OPC_PLUGIN_DST="${HOME}/.config/opencode/plugins/hookline.js"
+if [ -d "${HOME}/.config/opencode" ]; then
+  mkdir -p "$(dirname "$OPC_PLUGIN_DST")"
+  cp "${HOOK_SRC_DIR}/plugins/hookline.js" "$OPC_PLUGIN_DST"
+  echo "OpenCode plugin installed to $OPC_PLUGIN_DST"
+fi
+
 # Install CLI. Fall back to ~/.local/bin when /usr/local/bin isn't writable —
 # the launchd plist execs this path, so a silent copy failure means the daemon
 # exits 78 in a KeepAlive loop while install still reports success.

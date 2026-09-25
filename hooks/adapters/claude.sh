@@ -8,6 +8,7 @@
 # shellcheck disable=SC2034  # consumed by install.sh and core.sh
 
 ADAPTER_MATCHER="Bash|Edit|Write|NotebookEdit|AskUserQuestion"
+ADAPTER_RESPONSE_ONLY=0  # daemon may answer by injecting tmux keystrokes
 HOOKLINE_WAITING_AGENT="Claude"
 SETTINGS_GLOBAL="${HOME}/.claude/settings.json"
 SETTINGS_LOCAL="${CWD:+$CWD/.claude/settings.local.json}"

@@ -134,9 +134,15 @@ core_main() {
   PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
   MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-3}"
 
-  # 4. Register session with daemon (captures TTY + terminal info for routing)
+  # 4. Register session with daemon (captures TTY + terminal info for routing).
+  #    ADAPTER_RESPONSE_ONLY=1 (opencode: resolves decisions itself via the
+  #    reply API) registers without a pane so the daemon routes the phone
+  #    answer through the response file instead of tmux keystrokes.
   if daemon_alive; then
-    TMUX_PANE_ID="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null)}"
+    TMUX_PANE_ID=""
+    if [ "${ADAPTER_RESPONSE_ONLY:-0}" != 1 ]; then
+      TMUX_PANE_ID="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null)}"
+    fi
     daemon_send "$(jq -nc \
       --arg type "register" \
       --arg session_id "$SESSION_ID" \
