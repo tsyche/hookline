@@ -168,6 +168,7 @@ class Daemon:
         self.log.info(f"[{req_id[:16]}] phone: {decision}")
 
         tmux_pane     = session.get('tmux_pane', '')
+        tmux_socket   = session.get('tmux_socket', '')
         response_file = session.get('response_file', '')
 
         if decision in ('allow', 'deny'):
@@ -180,9 +181,15 @@ class Daemon:
                     keys = ['1', 'Enter']
                 else:
                     keys = ['Escape']
-                self.log.info(f"inject {decision} via tmux pane {tmux_pane} ({TMUX_BIN})")
+                # launchd has no TMUX_TMPDIR; -S pins the client's socket so
+                # send-keys reaches the real server instead of an empty default.
+                sock_args = ['-S', tmux_socket] if tmux_socket else []
+                self.log.info(
+                    f"inject {decision} via tmux pane {tmux_pane} ({TMUX_BIN})"
+                    + (f" socket={tmux_socket}" if tmux_socket else "")
+                )
                 result = subprocess.run(
-                    [TMUX_BIN, 'send-keys', '-t', tmux_pane] + keys,
+                    [TMUX_BIN] + sock_args + ['send-keys', '-t', tmux_pane] + keys,
                     capture_output=True,
                 )
                 if result.returncode != 0:
@@ -257,6 +264,7 @@ class Daemon:
                         'tty':          msg.get('tty', ''),
                         'term_program': msg.get('term_program', ''),
                         'tmux_pane':    msg.get('tmux_pane', ''),
+                        'tmux_socket':  msg.get('tmux_socket', ''),
                     })
                 self.log.info(
                     f"registered session {session_id[:8]} "

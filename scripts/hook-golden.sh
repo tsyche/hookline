@@ -74,12 +74,13 @@ run_case() {
   fi
 }
 
-# run_case_log <name> <provider> <pattern> <has|hasnt> <input-json> [setup]
+# run_case_log <name> <provider> <pattern> <has|hasnt> <input-json> [setup] [expected-stdout]
 # For providers whose contract is side effects (opencode writes decisions via
-# the reply API, not stdout): asserts empty stdout, rc 0, and pattern
-# presence/absence in the sandboxed hook log.
+# the reply API, not stdout): asserts rc 0, pattern presence/absence in the
+# sandboxed hook log, and stdout (empty by default, or containing
+# expected-stdout when the provider emits a decision).
 run_case_log() {
-  local name="$1" provider="$2" pattern="$3" mode="$4" input="$5" setup="${6:-}"
+  local name="$1" provider="$2" pattern="$3" mode="$4" input="$5" setup="${6:-}" exp_out="${7:-}"
   local h out rc found=0
   h=$(mktemp -d /tmp/hookline-golden.XXXXXX)
 
@@ -87,11 +88,18 @@ run_case_log() {
 
   out=$(printf '%s' "$input" | HOME="$h" TMUX='' bash "$HOOK" "$provider" 2>/dev/null)
   rc=$?
+  # background baseline logs after an internal settle sleep (1s) — wait it out
+  sleep 1.5
   grep -q -- "$pattern" "$h/.local/share/hookline/hookline.log" 2>/dev/null && found=1
   rm -rf "$h"
 
   local ok=1
-  [ "$out" = "" ] && [ "$rc" -eq 0 ] || ok=0
+  if [ -n "$exp_out" ]; then
+    case "$out" in *"$exp_out"*) ;; *) ok=0 ;; esac
+  else
+    [ "$out" = "" ] || ok=0
+  fi
+  [ "$rc" -eq 0 ] || ok=0
   if [ "$mode" = "has" ]; then
     [ "$found" -eq 1 ] || ok=0
   else
@@ -165,6 +173,25 @@ if grep -q "HOOKLINE_PROVIDERS" "$HOOK"; then
 else
   echo "SKIP opencode gate cases (entry has no HOOKLINE_PROVIDERS gate yet)"
 fi
+
+# ── claude progress counter: transcript metadata lines are not local answers ──
+FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+CLAUDE_TRANSCRIPT="$FIXTURE_DIR/transcript.jsonl"
+printf '%s\n' \
+  '{"type":"user","message":{"role":"user"}}' \
+  '{"type":"ai-title","aiTitle":"x.txt file"}' \
+  '{"type":"attachment","name":"foo"}' \
+  '{"type":"assistant","message":{"role":"assistant"}}' \
+  '{"type":"permission-mode","mode":"default"}' \
+  > "$CLAUDE_TRANSCRIPT"
+CLAUDE_WRITE=$(jq -nc --arg tp "$CLAUDE_TRANSCRIPT" \
+  '{tool_name:"Write",tool_input:{file_path:"/tmp/x.txt",content:"x"},cwd:"/tmp",session_id:"golden-2",transcript_path:$tp}')
+
+# 5 fixture lines, only 2 are user/assistant — raw wc would log 5 and the
+# grace period would mistake claude's own metadata writes for an answer.
+run_case_log "claude-progress-ignores-metadata" claude \
+  "baseline transcript lines: 2" has "$CLAUDE_WRITE" "" '"permissionDecision":"ask"'
+rm -rf "$FIXTURE_DIR"
 
 echo
 echo "golden: $PASS passed, $FAIL failed"

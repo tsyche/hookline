@@ -140,8 +140,20 @@ core_main() {
   #    answer through the response file instead of tmux keystrokes.
   if daemon_alive; then
     TMUX_PANE_ID=""
+    TMUX_SOCKET_ID=""
     if [ "${ADAPTER_RESPONSE_ONLY:-0}" != 1 ]; then
       TMUX_PANE_ID="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}' 2>/dev/null)}"
+      # launchd daemon has no TMUX_TMPDIR, so hand it the socket path —
+      # send-keys without -S targets an empty dir. Prefer $TMUX (client env),
+      # fall back to the server's own #{socket_path} when the agent strips
+      # TMUX from hook children.
+      if [ -n "$TMUX_PANE_ID" ]; then
+        if [ -n "${TMUX:-}" ]; then
+          TMUX_SOCKET_ID="${TMUX%%,*}"
+        else
+          TMUX_SOCKET_ID=$(tmux display-message -p '#{socket_path}' 2>/dev/null)
+        fi
+      fi
     fi
     daemon_send "$(jq -nc \
       --arg type "register" \
@@ -149,7 +161,8 @@ core_main() {
       --arg tty "$PARENT_TTY" \
       --arg term_program "${TERM_PROGRAM:-}" \
       --arg tmux_pane "${TMUX_PANE_ID:-}" \
-      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane}')"
+      --arg tmux_socket "${TMUX_SOCKET_ID:-}" \
+      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane,tmux_socket:$tmux_socket}')"
     log "registered session with daemon"
   fi
 

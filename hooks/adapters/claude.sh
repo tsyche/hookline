@@ -92,10 +92,16 @@ adapter_build_message() {
   fi
 }
 
-# Monotonic local-user-progress counter: transcript line count. Growth between
-# two reads means the user answered the prompt at the terminal.
+# Monotonic local-user-progress counter: transcript entries that represent
+# actual conversation (user/assistant). Claude also appends metadata lines
+# (ai-title, atis-latch, attachment, permission-mode, ...) at arbitrary times;
+# counting raw lines made those look like a local answer and killed the phone
+# flow. Growth between two reads means the user answered at the terminal.
 adapter_progress_lines() {
-  wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0"
+  local n
+  [ -f "$TRANSCRIPT_PATH" ] || { echo "0"; return; }
+  n=$(grep -cE '"type":"(user|assistant)"' "$TRANSCRIPT_PATH" 2>/dev/null) || true
+  echo "${n:-0}"
 }
 
 # allow → type "1" + Enter (option 1 is always "Yes")
