@@ -47,8 +47,6 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 1. **`hookline doctor`** — turns "why didn't I get notified?" into one self-explaining command (~1–2h)
 2. **Daemon health watchdog** — closes the known silent-degradation failure mode that already cost daily-driver notifications (~2–3h)
 3. **Daemon unit tests** — the Python daemon has zero coverage; registry/routing regressions ship undetected (~2–3h)
-2. **`hookline doctor`** — turns "why didn't I get notified?" into one self-explaining command (~1–2h)
-3. **Daemon health watchdog** — closes the known silent-degradation failure mode that already cost daily-driver notifications (~2–3h)
 
 ## Phase 5 — Reliability & self-healing (next)
 
