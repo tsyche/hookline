@@ -38,7 +38,7 @@ live only in untracked config (`~/.config/hookline/config`).
 
 ## v1.3.0 — Multi-provider revival, phases 0–4 (archived 2026-09-25)
 
-Plan: `~/.claude/plans/hookline-multi-provider.md`.
+Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
 
 - **Phase 0** — roadmap flipped to multi-provider revival; CI runner bumped
 - **Phase 1** — provider-neutral core split from adapters; provider registry gate

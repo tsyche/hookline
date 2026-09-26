@@ -9,8 +9,8 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
 ## Stack
 
 - **Hook** (`hooks/hookline.sh` entry → `hooks/core.sh` + a provider adapter in `hooks/adapters/`) —
-  Bash. Entry resolves the provider (`hookline.sh [provider]`, default `claude`, `blackbox`
-  rides the claude adapter), gates on `HOOKLINE_PROVIDERS`, then core runs grace period,
+  Bash. Entry resolves the provider (`hookline.sh [provider]`, default `claude`, the local
+  custom provider rides the claude adapter), gates on `HOOKLINE_PROVIDERS`, then core runs grace period,
   safe-prefix allowlist, and daemon handoff; the adapter translates payload, decision JSON,
   allowlist source, progress signal, and keystroke injection.
 - **opencode plugin** (`hooks/plugins/hookline.js` → `~/.config/opencode/plugins/hookline.js`) —
@@ -18,9 +18,15 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   answers the native prompt through a unix-socket bridge (opencode's serverUrl does not accept
   plain TCP; only the in-process SDK client can reply). Appends a local-answer line on
   `permission.replied` for the away-detection signal.
-- **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only). Persistent SSE
-  connection to ntfy for instant phone responses; injects into tmux via `tmux send-keys`.
-  Managed by launchd (`daemon/com.hookline.daemon.plist`).
+- **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only), managed by launchd
+  (`daemon/com.hookline.daemon.plist`). Listens on a Unix socket
+  (`~/.local/share/hookline/daemon.sock`) for messages from hook invocations; holds a
+  persistent SSE connection to the ntfy response topic so phone responses arrive instantly;
+  keeps a session registry mapping `session_id → {tty, term_program, tmux_pane}`. On
+  response, tmux sessions are injected via `tmux send-keys` directly, everything else gets a
+  response file that the hook process (a child of the terminal) reads — injection stays in
+  the process tree that already has macOS Accessibility trust. Falls back to inline polling
+  when the daemon is unavailable.
 - **CLI** (`hookline`) — Bash. `status`, `topic`, `daemon start/stop/restart/status`.
 - **Install/uninstall** (`install.sh`, `uninstall.sh`), **tests** (`scripts/test.sh`,
   `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network).
@@ -50,12 +56,12 @@ just uninstall      # remove everything
 
 ## Config & data
 
-- Config: `~/.config/hookline/config` (not tracked) — `HOOKLINE_PROVIDERS="blackbox opencode"`
-  gates which registrations fire (unset = all enabled); `hookline.sh <provider>` is what the
-  settings entry passes
+- Config: `~/.config/hookline/config` (not tracked) — `HOOKLINE_PROVIDERS` names the enabled
+  providers (concrete local ids live only in this untracked file); unset = all enabled;
+  `hookline.sh <provider>` is what the settings entry passes
 - Installed runtime: `~/.local/share/hookline/` (hooks dir = entry + core + adapters,
   daemon, socket, logs)
 - Hook registration: `~/.claude/settings.json` (provider `claude`) and
-  `~/.claude-bb/settings.json` (provider `blackbox`); each registration is an inverse pair
-  with install/uninstall. opencode registers differently — plugin file copied to
-  `~/.config/opencode/plugins/hookline.js` (no settings-JSON entry)
+  `~/.claude-bb/settings.json` (the local custom claude-profile provider); each registration
+  is an inverse pair with install/uninstall. opencode registers differently — plugin file
+  copied to `~/.config/opencode/plugins/hookline.js` (no settings-JSON entry)

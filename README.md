@@ -24,6 +24,7 @@ Each provider plugs into a provider-neutral core through an adapter: Claude Code
 
 - macOS (Terminal.app, iTerm2, WezTerm, or tmux — see [terminal support](#terminal-support))
 - `bash`, `jq`, `curl`, `python3`
+- `just` (optional — `bash install.sh` works without it)
 - [ntfy app](https://ntfy.sh) on your phone (iOS / Android)
 
 ## Install
@@ -45,7 +46,7 @@ The installer will:
 4. Install the hook to `~/.local/share/hookline/hooks/hookline.sh`
 5. Install the daemon to `~/.local/share/hookline/daemon/hookline-daemon`
 6. Register the daemon with launchd (starts automatically on login)
-7. Register the hook in `~/.claude/settings.json` (plus any additional claude-profile settings files detected on this machine)
+7. Register the hook in `~/.claude/settings.json` (plus a second Claude-profile settings file when one is present on the machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
 
 Then open the ntfy app and subscribe to your topic (and `your-topic-response`).
