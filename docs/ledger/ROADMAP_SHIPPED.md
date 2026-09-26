@@ -12,6 +12,8 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.2 core | 2026-06 | daemon + SSE, status/topic commands, multi-terminal injection, zombie prevention |
 | v1.3.0 | 2026-09-25 | first tagged release; multi-provider revival phases 0–4 — registry + adapter split, local custom provider, opencode plugin adapter, graybox install with real phone-tap gates, docs sweep |
 | Phase 5 | 2026-09-26 | reliability: `hookline doctor`, heartbeat + launchd watchdog, daemon unit tests |
+| Release smoke | 2026-09-26 | assert latest GitHub release tag == `VERSION`, gated in CI right after every release |
+| Phase 5b | 2026-09-26 | install/uninstall sandbox tests, heartbeat ages in `status`, log rotation + quiet SSE, smoke target-commit check |
 
 ## v1.1 — Stable (archived)
 
@@ -87,3 +89,30 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
    - The Python daemon has zero automated coverage today — only the shell hook has golden tests, so registry/routing regressions ship undetected
    - stdlib `unittest` (no new deps) covering session registry mapping, response-file routing, tmux vs response-only paths, heartbeat staleness
    - Acceptance: a new `test-daemon` recipe runs in CI alongside `lint`, `golden`, and `check-docs`
+
+### 2026-09-26 — Release smoke check (shipped)
+
+1. **Release smoke check** (~0.5h)
+   - Post-push script asserting the latest GitHub release tag matches `VERSION`
+   - Catches a silent release-pipeline regression (the pipeline is now the only release path)
+
+## Phase 5 (rest) — Reliability quick wins (shipped 2026-09-26)
+
+1. **Install/uninstall sandbox tests** (~1–2h)
+   - `install.sh` / `uninstall.sh` were only graybox-tested by hand in Phase 3
+   - Recipe runs both in a temp `HOME` + fake `~/.claude` and asserts settings-JSON
+     registration pairs invert exactly, plugin file appears/disappears
+
+2. **Heartbeat ages in `hookline status`** (~0.5h)
+   - Doctor shows heartbeat/SSE age; the everyday `status` command doesn't — same
+     data, one field per line
+
+3. **Daemon log rotation / quieter SSE reconnects** (~0.5h)
+   - `daemon.log` grows unbounded; with the 300s SSE read timeout a healthy idle
+     connection now reconnects (and logs) every ~5 min — cap size or log only
+     state changes
+
+4. **Release smoke: target commit check** (~0.3h)
+   - Extend `scripts/release-smoke.sh` to assert the release's `targetCommitish`
+     equals the checked-out main HEAD — tag==VERSION alone misses a release
+     tagging the wrong commit

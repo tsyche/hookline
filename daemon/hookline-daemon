@@ -10,6 +10,7 @@ keeping keystroke injection in the hook's process tree (already trusted by macOS
 import base64
 import json
 import logging
+import logging.handlers
 import os
 import signal
 import socket
@@ -33,6 +34,11 @@ SSE_HEARTBEAT_PATH = os.path.expanduser("~/.local/share/hookline/sse-heartbeat")
 # idle connections reconnect on the same cadence — cheap — while a frozen
 # urllib read leaves the heartbeat stale so the watchdog can restart us.
 SSE_READ_TIMEOUT = 300
+
+# daemon.log is append-only and used to grow forever (plus the launchd plist
+# points stdout/stderr at it). Cap it: one rotated backup, then overwrite.
+LOG_MAX_BYTES   = 512 * 1024
+LOG_BACKUP_COUNT = 1
 
 
 def touch(path):
@@ -85,13 +91,20 @@ def load_config():
 
 class Daemon:
     def __init__(self):
-        logging.basicConfig(
-            filename=LOG_PATH,
-            level=logging.INFO,
-            format='[%(asctime)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        self.log     = logging.getLogger('hookline')
+        # Rotating handler on this logger only (not root/basicConfig) so the
+        # unit tests can instantiate Daemon repeatedly without stacking
+        # handlers. propagate=False keeps root from double-writing.
+        self.log = logging.getLogger('hookline')
+        if not self.log.handlers:
+            handler = logging.handlers.RotatingFileHandler(
+                LOG_PATH, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT,
+            )
+            handler.setFormatter(logging.Formatter(
+                '[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+            ))
+            self.log.addHandler(handler)
+            self.log.setLevel(logging.INFO)
+            self.log.propagate = False
         self.sessions = {}  # session_id → info dict
         self.pending  = {}  # req_id → session_id
         self.lock     = threading.Lock()
@@ -149,15 +162,24 @@ class Daemon:
     # ── SSE listener ───────────────────────────────────────────────────────────
 
     def sse_listener(self):
+        # Log state changes only: the first connect, the first failure of an
+        # error streak, and the recovery after one. Routine idle recycles
+        # (SSE_READ_TIMEOUT with a healthy server) are silent — they used to
+        # write two lines every ~5 min and grow daemon.log without bound.
+        announce = True       # next successful connect is a state change
+        streak_logged = False # first failure of the current streak
         while not self._stop.is_set():
             try:
                 config = load_config()
                 topic  = config.get('HOOKLINE_TOPIC', '')
                 server = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
                 url    = f"{server}/{topic}-response/json"
-                self.log.info(f"SSE connecting to {url}")
                 req = urllib.request.Request(url, headers=self._ntfy_headers(config))
                 with urllib.request.urlopen(req, timeout=SSE_READ_TIMEOUT) as resp:
+                    if announce:
+                        self.log.info(f"SSE connected to {url}")
+                        announce = False
+                    streak_logged = False
                     touch(SSE_HEARTBEAT_PATH)
                     for raw in resp:
                         if self._stop.is_set():
@@ -178,8 +200,15 @@ class Daemon:
                                 ).start()
                         except json.JSONDecodeError:
                             pass
+            except (socket.timeout, TimeoutError):
+                # Routine idle recycle after SSE_READ_TIMEOUT — expected
+                # cadence, not a state change. Reconnect silently.
+                pass
             except Exception as e:
-                self.log.warning(f"SSE lost ({e}), reconnecting in 5s")
+                if not streak_logged:
+                    self.log.warning(f"SSE lost ({e}), reconnecting in 5s")
+                    streak_logged = True
+                announce = True
                 time.sleep(5)
 
     # ── response routing ───────────────────────────────────────────────────────

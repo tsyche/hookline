@@ -58,6 +58,22 @@ test-daemon:
 doctor-test:
     bash scripts/doctor-test.sh
 
+# Sandboxed checks for `hookline status` daemon section (fake HOME, no network)
+status-test:
+    bash scripts/status-test.sh
+
+# Sandboxed install/uninstall round-trip tests (fake HOME, no launchd)
+install-test:
+    bash scripts/install-test.sh
+
+# Assert the latest GitHub release tag matches VERSION (needs gh auth)
+release-smoke:
+    bash scripts/release-smoke.sh
+
+# Sandboxed regression tests for the release smoke check (fake gh, no network)
+release-smoke-test:
+    bash scripts/release-smoke-test.sh
+
 # Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
 sync-docs:
     @if [ AGENTS.md -nt CLAUDE.md ]; then cp AGENTS.md CLAUDE.md && echo "synced AGENTS.md -> CLAUDE.md"; \

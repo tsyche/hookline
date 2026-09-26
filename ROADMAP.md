@@ -5,8 +5,8 @@
 > Multi-provider revival **Phases 0–4 shipped (2026-09-25)** as **v1.3.0** — `VERSION` is
 > the source of truth, and the release workflow tags and publishes on the first main push
 > that carries a `VERSION` change. Sections below are **phases** (the same scheme as
-> Phases 0–4, house convention across projects), ordered next-up first: Phase 5
-> reliability → Phase 6 onboarding → Phase 7 remote control + E2E.
+> Phases 0–4, house convention across projects), ordered next-up first: Phase 6
+> onboarding → Phase 7 remote control + E2E (Phases 0–5 shipped).
 
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
@@ -29,6 +29,9 @@
 
 > **Backlog status:** Phase 4 (docs/wording sweep) landed 2026-09-25 — the old post-v1.2
 > backlog has been re-triaged into Phases 5–6 under the multi-provider architecture.
+> **v1.4.0 tagged 2026-09-26** — Phase 5 reliability fully shipped (doctor, watchdog,
+> daemon tests, release smoke check + target check, install/uninstall tests,
+> heartbeat ages in status, log rotation / quiet SSE).
 
 ## Goals
 
@@ -44,34 +47,18 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Release smoke check** — the pipeline is now the only release path; assert tag matches `VERSION` (~0.5h)
-2. **Install/uninstall sandbox tests** — closes the last manual-only test gap in the install chain (~1–2h)
-3. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
+1. **`check-gates` recipe** — one local command mirrors every CI gate so the lists can't drift (~0.3h)
+2. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
+3. **In-repo git hooks** — fresh clones never get the `check-docs` pre-commit hook today (~1h)
 
-## Phase 5 — Reliability & self-healing (next)
+## Phase 5 — Reliability & self-healing (complete)
 
-> Items 1–3 (`hookline doctor`, daemon health watchdog, daemon unit tests) shipped
-> 2026-09-26 — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> **Phase 5 shipped 2026-09-26** — `hookline doctor`, heartbeat watchdog, daemon
+> unit tests, release smoke check (incl. target-commit check), install/uninstall
+> sandbox tests, heartbeat ages in `status`, log rotation + quiet SSE reconnects.
+> All entries preserved in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-1. **Release smoke check** (~0.5h)
-   - Post-push script asserting the latest GitHub release tag matches `VERSION`
-   - Catches a silent release-pipeline regression (the pipeline is now the only release path)
-
-2. **Install/uninstall sandbox tests** (~1–2h)
-   - `install.sh` / `uninstall.sh` were only graybox-tested by hand in Phase 3
-   - Recipe runs both in a temp `HOME` + fake `~/.claude` and asserts settings-JSON
-     registration pairs invert exactly, plugin file appears/disappears
-
-3. **Heartbeat ages in `hookline status`** (~0.5h)
-   - Doctor shows heartbeat/SSE age; the everyday `status` command doesn't — same
-     data, one field per line
-
-4. **Daemon log rotation / quieter SSE reconnects** (~0.5h)
-   - `daemon.log` grows unbounded; with the 300s SSE read timeout a healthy idle
-     connection now reconnects (and logs) every ~5 min — cap size or log only
-     state changes
-
-## Phase 6 — Onboarding & contributors
+## Phase 6 — Onboarding & contributors (next)
 
 1. **Setup wizard** (~2–3h)
    - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
@@ -97,7 +84,11 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - The `check-docs` pre-commit hook currently runs from machine-local `~/.git-hooks` via a global `core.hooksPath` — contributors (and any fresh clone) never get it
    - Vendor `.githooks/` in the repo plus a `hooks` recipe (and a CONTRIBUTING line); CI already gates the same checks, this closes the local-feedback gap
 
-5. **CHANGELOG.md** (~1h)
+5. **`check-gates` recipe** (~0.3h)
+   - One recipe running every gate CI runs (`lint`, `golden`, `test-daemon`, `doctor-test`, `status-test`, `install-test`, `release-smoke-test`, `check-docs`); `ci.yml` calls the recipe instead of listing steps, so local and CI gate lists cannot drift
+   - Acceptance: the recipe runs green locally; CI workflow reduced to the single recipe call
+
+6. **CHANGELOG.md** (~1h)
    - Releases now publish generated notes automatically; a tracked CHANGELOG aggregates them per version so the repo shows release history without opening GitHub
    - Pulled forward from the old Future list now that release automation exists
 

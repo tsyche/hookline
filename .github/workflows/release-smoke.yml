@@ -1,0 +1,21 @@
+name: release-smoke
+# Runs right after the release workflow finishes (success or failure) and
+# asserts the latest GitHub release tag matches VERSION — catches a silent
+# release-pipeline regression or a wrong-version tag.
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - run: just release-smoke-test
+      - run: just release-smoke
+        env:
+          GH_TOKEN: ${{ github.token }}

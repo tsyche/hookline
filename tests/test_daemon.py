@@ -10,6 +10,7 @@ Run: /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
 import importlib.machinery
 import importlib.util
 import json
+import logging.handlers
 import os
 import socket
 import subprocess
@@ -227,6 +228,93 @@ class TestHeartbeat(unittest.TestCase):
         self.assertGreaterEqual(daemon_mod.age(daemon_mod.HEARTBEAT_PATH), 0)
         self.assertGreaterEqual(daemon_mod.age(daemon_mod.SSE_HEARTBEAT_PATH), 0)
         fake_threads.Thread.assert_called_once()
+
+
+class FakeSseResponse:
+    """Minimal stand-in for an SSE stream: connects, immediately ends."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        return iter([])
+
+
+def drive_sse(d, script, stop_after):
+    """Run sse_listener with a scripted urlopen; returns (info, warning) lists.
+
+    script[n] is returned by the nth urlopen call (or raised when it is an
+    exception); the stop_after-th call sets d._stop so the loop exits.
+    """
+    info, warning = [], []
+    calls = {"n": 0}
+
+    def fake_urlopen(*args, **kwargs):
+        n = calls["n"]
+        calls["n"] += 1
+        if n >= stop_after:
+            d._stop.set()
+        action = script[min(n, len(script) - 1)]
+        if isinstance(action, BaseException):
+            raise action
+        return action
+
+    with mock.patch.object(d.log, "info", side_effect=lambda m, *a, **k: info.append(m)), \
+         mock.patch.object(d.log, "warning", side_effect=lambda m, *a, **k: warning.append(m)), \
+         mock.patch.object(daemon_mod.time, "sleep"), \
+         mock.patch.object(daemon_mod.urllib.request, "urlopen", fake_urlopen):
+        d.sse_listener()
+    return info, warning
+
+
+class TestSseLogging(unittest.TestCase):
+    """The daemon log records SSE state changes, not routine reconnects."""
+
+    def test_idle_timeout_reconnects_silently(self):
+        d = daemon_mod.Daemon()
+        info, warning = drive_sse(d, [socket.timeout("timed out")], stop_after=3)
+        self.assertEqual(info, [])
+        self.assertEqual(warning, [])
+
+    def test_clean_close_announces_connect_exactly_once(self):
+        d = daemon_mod.Daemon()
+        info, warning = drive_sse(d, [FakeSseResponse()], stop_after=3)
+        connected = [m for m in info if "SSE connected" in m]
+        self.assertEqual(len(connected), 1, info)
+        self.assertEqual(warning, [])
+
+    def test_error_streak_logs_one_warning_then_recovery(self):
+        d = daemon_mod.Daemon()
+        info, warning = drive_sse(
+            d,
+            [daemon_mod.urllib.error.URLError("down"), FakeSseResponse()],
+            stop_after=4,
+        )
+        lost = [m for m in warning if "SSE lost" in m]
+        self.assertEqual(len(lost), 1, warning)
+        connected = [m for m in info if "SSE connected" in m]
+        self.assertEqual(len(connected), 1, info)
+
+
+class TestLogRotation(unittest.TestCase):
+    def test_log_file_is_capped_with_one_backup(self):
+        d = daemon_mod.Daemon()
+        self.assertEqual(len(d.log.handlers), 1)
+        handler = d.log.handlers[0]
+        self.assertIsInstance(handler, logging.handlers.RotatingFileHandler)
+        self.assertEqual(handler.maxBytes, daemon_mod.LOG_MAX_BYTES)
+        # ~10KB records: ~960KB total must roll over into daemon.log.1
+        for _ in range(96):
+            d.log.info("rotation-probe " + "x" * 10240)
+        handler.flush()
+        active = os.path.getsize(daemon_mod.LOG_PATH)
+        backup = daemon_mod.LOG_PATH + ".1"
+        self.assertLessEqual(active, daemon_mod.LOG_MAX_BYTES + 16 * 1024)
+        self.assertTrue(os.path.exists(backup), "no rotated backup created")
+        self.assertGreater(os.path.getsize(backup), 0)
 
 
 class TestWatchdog(unittest.TestCase):

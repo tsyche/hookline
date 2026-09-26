@@ -34,7 +34,10 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
 - **Install/uninstall** (`install.sh`, `uninstall.sh`), **tests** (`scripts/test.sh`,
   `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network;
   `tests/test_daemon.py` — daemon unit tests; `scripts/doctor-test.sh` — sandboxed
-  doctor report tests).
+  doctor report tests; `scripts/status-test.sh` — sandboxed status report tests;
+  `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
+  `scripts/release-smoke-test.sh` — sandboxed release smoke check tests).
+  Install/uninstall honor `HOOKLINE_SANDBOX=1` (no launchctl, no `/usr/local/bin`).
 
 ## Key commands
 
@@ -44,6 +47,9 @@ just test           # send a test notification
 just golden         # hook stdout contract tests (sandboxed, no network)
 just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
 just doctor-test    # sandboxed `hookline doctor` report tests (no network, no launchd)
+just status-test    # sandboxed `hookline status` report tests (no network, no launchd)
+just install-test   # sandboxed install/uninstall round-trip tests (no launchd)
+just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 just status         # config, daemon status, connectivity, recent log
 just lint           # shellcheck the shell scripts + py_compile the Python files
 just logs           # tail hook + daemon logs

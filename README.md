@@ -112,14 +112,14 @@ Changes take effect immediately — no reinstall needed.
 ## CLI
 
 ```bash
-hookline status               # show config, daemon status, connectivity, recent log
+hookline status               # config, daemon status (heartbeat/SSE ages), connectivity, recent log
 hookline doctor               # diagnose the whole chain; fixes a dead/hung daemon
 hookline topic                # show the current ntfy topic
 hookline topic <name>         # switch topic, update config, restart daemon
 hookline daemon start         # start the daemon
 hookline daemon stop          # stop the daemon
 hookline daemon restart       # restart the daemon
-hookline daemon status        # show daemon pid, active sessions, pending approvals
+hookline daemon status        # daemon pid, sessions, pending approvals, heartbeat/SSE ages
 ```
 
 If phone notifications stop arriving, run `hookline doctor` — it checks the
@@ -133,17 +133,22 @@ hung daemon automatically.
 just golden         # hook stdout contract tests (sandboxed, no network)
 just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
 just doctor-test    # sandboxed `hookline doctor` report tests
+just status-test    # sandboxed `hookline status` report tests
+just install-test   # sandboxed install/uninstall round-trip tests
+just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 bash scripts/test.sh
 ```
 
 `scripts/test.sh` sends a test notification with Allow/Deny buttons and reports
-the response; the other three run offline and also gate CI.
+the response; the other six run offline and also gate CI. `just release-smoke`
+asserts the latest GitHub release tag matches `VERSION` (needs gh auth) and
+runs in CI right after every release.
 
 ## Logs
 
 ```bash
 tail -f ~/.local/share/hookline/hookline.log   # hook log
-tail -f ~/.local/share/hookline/daemon.log     # daemon log
+tail -f ~/.local/share/hookline/daemon.log     # daemon log (capped at 512KB + daemon.log.1 backup)
 tail -f ~/.local/share/hookline/watchdog.log   # watchdog restarts
 ```
 
@@ -153,7 +158,9 @@ tail -f ~/.local/share/hookline/watchdog.log   # watchdog restarts
 bash uninstall.sh
 ```
 
-Removes the hook from Claude settings, the OpenCode plugin, and installed files. Optionally removes config and logs.
+Removes the hook from Claude settings, the OpenCode plugin, the daemon and
+watchdog launchd jobs, the CLI, and installed files. Optionally removes config
+and logs.
 
 ## Terminal support
 

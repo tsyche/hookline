@@ -166,7 +166,21 @@ cmd_daemon() {
         pid=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('pid','?'))" 2>/dev/null)
         sessions=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('sessions',0))" 2>/dev/null)
         pending=$(echo "$info" | "$PYBIN" -c "import json,sys; d=json.load(sys.stdin); print(d.get('pending',0))" 2>/dev/null)
+        hb=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('heartbeat_age','-999'))" 2>/dev/null)
+        sse=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('sse_age','-999'))" 2>/dev/null)
         echo "  running ✓  pid=$pid  sessions=$sessions  pending=$pending"
+        # -999/empty = key absent = daemon predates the heartbeat build
+        if [ -z "$hb" ] || [ "$hb" = "-999" ]; then
+          echo "  heartbeat:  unknown (old daemon build — restart to upgrade)"
+          echo "  sse:        unknown (old daemon build)"
+        else
+          echo "  heartbeat:  ${hb}s"
+          case "$sse" in
+            -999|"") echo "  sse:        unknown (old daemon build)" ;;
+            -1)      echo "  sse:        not connected" ;;
+            *)       echo "  sse:        ${sse}s" ;;
+          esac
+        fi
       elif [ -f "$PLIST_DST" ]; then
         echo "  NOT running (installed, not started — run: hookline daemon start)"
       else

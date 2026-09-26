@@ -21,4 +21,7 @@ jobs:
       - run: just golden
       - run: just test-daemon
       - run: just doctor-test
+      - run: just status-test
+      - run: just install-test
+      - run: just release-smoke-test
       - run: just check-docs

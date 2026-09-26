@@ -92,10 +92,17 @@ fi
 # Install CLI. Fall back to ~/.local/bin when /usr/local/bin isn't writable —
 # the launchd plist execs this path, so a silent copy failure means the daemon
 # exits 78 in a KeepAlive loop while install still reports success.
+# HOOKLINE_SANDBOX=1 (scripts/install-test.sh) forces the home-local path so
+# test runs never touch /usr/local/bin.
 CLI_SRC="${REPO}/hookline"
 CLI_DST="/usr/local/bin/hookline"
 if [ -f "$CLI_SRC" ]; then
-  if cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST"; then
+  if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
+    CLI_DST="${HOME}/.local/bin/hookline"
+    mkdir -p "$(dirname "$CLI_DST")"
+    cp "$CLI_SRC" "$CLI_DST" && chmod +x "$CLI_DST"
+    echo "CLI installed to $CLI_DST (sandbox mode — /usr/local/bin untouched)"
+  elif cp "$CLI_SRC" "$CLI_DST" 2>/dev/null && chmod +x "$CLI_DST"; then
     echo "CLI installed to $CLI_DST"
   else
     CLI_DST="${HOME}/.local/bin/hookline"
@@ -114,9 +121,13 @@ echo "Daemon installed to $DAEMON_DST"
 sed -e "s|HOOKLINE_DAEMON_PATH|$CLI_DST|g" \
     -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
     "$PLIST_SRC" > "$PLIST_DST"
-launchctl unload "$PLIST_DST" 2>/dev/null || true
-launchctl load "$PLIST_DST"
-echo "Daemon registered with launchd and started"
+if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
+  echo "Daemon plist written to $PLIST_DST (launchd registration skipped — HOOKLINE_SANDBOX=1)"
+else
+  launchctl unload "$PLIST_DST" 2>/dev/null || true
+  launchctl load "$PLIST_DST"
+  echo "Daemon registered with launchd and started"
+fi
 
 # Install the heartbeat watchdog — a StartInterval job that restarts a hung
 # daemon (KeepAlive only catches processes that actually exit).
@@ -125,9 +136,13 @@ chmod +x "$WATCHDOG_DST"
 sed -e "s|HOOKLINE_WATCHDOG_PATH|$WATCHDOG_DST|g" \
     -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
     "$WATCHDOG_PLIST_SRC" > "$WATCHDOG_PLIST_DST"
-launchctl unload "$WATCHDOG_PLIST_DST" 2>/dev/null || true
-launchctl load "$WATCHDOG_PLIST_DST"
-echo "Heartbeat watchdog registered with launchd"
+if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
+  echo "Watchdog plist written to $WATCHDOG_PLIST_DST (launchd registration skipped — HOOKLINE_SANDBOX=1)"
+else
+  launchctl unload "$WATCHDOG_PLIST_DST" 2>/dev/null || true
+  launchctl load "$WATCHDOG_PLIST_DST"
+  echo "Heartbeat watchdog registered with launchd"
+fi
 
 # Register the hook in a Claude-family settings file, keyed by provider. The
 # command passes the provider id so HOOKLINE_PROVIDERS can enable/disable each
