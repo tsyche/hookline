@@ -5,7 +5,5 @@ updates:
     schedule:
       interval: monthly
     groups:
-      minor-and-patch:
-        update-types: [minor, patch]
-      major:
-        update-types: [major]
+      all:
+        patterns: ["*"]

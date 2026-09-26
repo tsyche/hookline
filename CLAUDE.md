@@ -8,7 +8,7 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
 
 ## Stack
 
-- **Hook** (`hooks/hookline.sh` entry → `hooks/core.sh` + `hooks/adapters/<provider>.sh`) —
+- **Hook** (`hooks/hookline.sh` entry → `hooks/core.sh` + a provider adapter in `hooks/adapters/`) —
   Bash. Entry resolves the provider (`hookline.sh [provider]`, default `claude`, `blackbox`
   rides the claude adapter), gates on `HOOKLINE_PROVIDERS`, then core runs grace period,
   safe-prefix allowlist, and daemon handoff; the adapter translates payload, decision JSON,

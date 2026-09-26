@@ -2,7 +2,9 @@
 
 > **tl;dr:** active work only — shipped entries live in
 > [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
-> Multi-provider revival **Phases 0–4 shipped (2026-09-25)**; **next: v1.5 remote
+> Multi-provider revival **Phases 0–4 shipped (2026-09-25)** and make up **v1.3.0**, the
+> first tagged release — `VERSION` is the source of truth, and the release workflow tags and
+> publishes it on the main push that carries a `VERSION` change. **Next: v1.4 remote
 > control + end-to-end encryption**.
 
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
@@ -24,8 +26,8 @@
 > persistence · no third-party relay) now applies per-provider rather than as an
 > archive-or-keep test for the whole project.
 
-> **Backlog status:** Phase 4 (docs/wording sweep) landed 2026-09-25 — the v1.1–v1.4
-> backlog below is now due for re-triage under the multi-provider architecture.
+> **Backlog status:** Phase 4 (docs/wording sweep) landed 2026-09-25 — the post-v1.2 backlog
+> below is now due for re-triage under the multi-provider architecture.
 
 ## Goals
 
@@ -41,11 +43,14 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Shipped archive
 
-v1.1 (first stable) and the shipped v1.2 core — daemon, `status`/`topic` commands,
-multi-terminal injection, zombie prevention, AskUserQuestion hook, ntfy Basic Auth — moved
-to [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
+v1.1 (first stable), the v1.2 core, and **v1.3.0** — multi-provider revival phases 0–4, the
+first release cut by the automated release workflow (registry + adapter split, opencode
+plugin adapter, graybox phone-tap gates, docs sweep) — are archived in
+[docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md), along with the v1.2 core
+(daemon, `status`/`topic` commands, multi-terminal injection, zombie prevention,
+AskUserQuestion hook, ntfy Basic Auth).
 
-## Backlog — next-up after v1.2
+## Backlog — next-up after v1.3.0
 
 1. **Setup wizard** (~2–3h)
    - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
@@ -67,7 +72,7 @@ to [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
    - `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days
    - The hook already falls back to legacy polling when the daemon is unresponsive (notifications still fire), but the instant-SSE path stays degraded until a manual restart
    - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
-   - Promoted from v1.3 after silent notification loss bit the daily driver
+   - Promoted from the medium-term list after silent notification loss bit the daily driver
 
 4. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
@@ -76,34 +81,13 @@ to [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
 
 5. **CONTRIBUTING.md + CI** (~1–2h)
    - CONTRIBUTING.md: how to add a notification backend, how to test the hook locally, PR process
-   - GitHub Actions: ~~`shellcheck` on hookline.sh and install.sh~~ ✅ CI runs `just lint`
-     (shellcheck + `py_compile`) on push/PR (`.github/workflows/ci.yml`); CONTRIBUTING.md still open
+   - GitHub Actions: CI runs `just lint` (shellcheck + `py_compile`), `just golden`
+     (17 sandboxed hook contract tests), and `just check-docs` on push/PR
+     (`.github/workflows/ci.yml`); Dependabot grouped monthly for `github-actions`;
+     CONTRIBUTING.md still open
    - Essential for a FOSS project inviting contributions; low effort, high community signal
 
-## v1.3 — Medium-term
-
-- **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
-- **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
-- **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
-- **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
-- **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
-- **Companion app — one-tap deep link to the right session** — a small Android companion app that registers a custom URL scheme (e.g. `hookline://connect?host=mac&session=hookline`). hookline embeds the connect command (including the exact tmux session for the project that fired) as a `view`-action button on the notification; tapping it opens the app, which fires Termux's `RUN_COMMAND` intent with the *typed* extras Termux needs (boolean `RUN_COMMAND_BACKGROUND=false`, `String[]` arguments) — the thing a bare `ssh://` link or a string-only ntfy broadcast can't do. Lands you directly in the correct session, no manual picker. Why a companion app and not config + ConnectBot/Tasker: Termux registers no URL scheme, and ntfy can only send string intent extras, so the only clean Android paths are (a) ConnectBot as an `ssh://` handler — separate app, bare shell, or (b) a Tasker/MacroDroid bridge — paid/fragile, terrible onboarding. A first-party app owns the whole bridge with zero third-party glue. **Endgame:** the same app can grow a persistent connection straight to the hookline daemon (see [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)) — at which point it receives the approval request *and* launches the session in-process, dropping the ntfy dependency on the receive side entirely. (Tracked here after a manual-flow decision: today, a missed prompt just sends a plain "prompt expired" notification and you connect by hand — VPN → Termux → `mac` → pick session.)
-- **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
-- **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
-
-## v1.4 — Future
-
-- **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core
-- **Direct mode via Tailscale / VPN** — daemon exposes a small HTTP server; phone polls it directly over Tailscale IP or VPN — zero relay dependency; PWA or Shortcut as mobile interface
-- **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
-- **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
-- **Notification content control** — configurable truncation; redact sensitive path segments
-- **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
-- **Always-deny patterns** — companion to allowlist for commands that should always be blocked
-- **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
-- **CHANGELOG** — versioned release notes; important signal of project health for FOSS adopters
-
-## v1.5 — Remote control (next)
+## v1.4 — Remote control (next)
 
 Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0–4.
 
@@ -132,6 +116,29 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
   name private local providers (use "local" / "custom"); concrete ids stay in untracked
   config. Applied to README/ROADMAP/ledger 2026-09-25; verify future setup-wizard strings
   and audit tracked agent docs (`AGENTS.md`/`CLAUDE.md`) for stragglers.
+
+## v1.5 — Medium-term
+
+- **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
+- **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
+- **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
+- **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
+- **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
+- **Companion app — one-tap deep link to the right session** — a small Android companion app that registers a custom URL scheme (e.g. `hookline://connect?host=mac&session=hookline`). hookline embeds the connect command (including the exact tmux session for the project that fired) as a `view`-action button on the notification; tapping it opens the app, which fires Termux's `RUN_COMMAND` intent with the *typed* extras Termux needs (boolean `RUN_COMMAND_BACKGROUND=false`, `String[]` arguments) — the thing a bare `ssh://` link or a string-only ntfy broadcast can't do. Lands you directly in the correct session, no manual picker. Why a companion app and not config + ConnectBot/Tasker: Termux registers no URL scheme, and ntfy can only send string intent extras, so the only clean Android paths are (a) ConnectBot as an `ssh://` handler — separate app, bare shell, or (b) a Tasker/MacroDroid bridge — paid/fragile, terrible onboarding. A first-party app owns the whole bridge with zero third-party glue. **Endgame:** the same app can grow a persistent connection straight to the hookline daemon (see [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)) — at which point it receives the approval request *and* launches the session in-process, dropping the ntfy dependency on the receive side entirely. (Tracked here after a manual-flow decision: today, a missed prompt just sends a plain "prompt expired" notification and you connect by hand — VPN → Termux → `mac` → pick session.)
+- **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
+- **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
+
+## v1.6 — Future
+
+- **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core
+- **Direct mode via Tailscale / VPN** — daemon exposes a small HTTP server; phone polls it directly over Tailscale IP or VPN — zero relay dependency; PWA or Shortcut as mobile interface
+- **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
+- **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
+- **Notification content control** — configurable truncation; redact sensitive path segments
+- **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
+- **Always-deny patterns** — companion to allowlist for commands that should always be blocked
+- **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
+- **CHANGELOG** — versioned release notes; important signal of project health for FOSS adopters
 
 ---
 

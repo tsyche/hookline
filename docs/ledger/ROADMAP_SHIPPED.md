@@ -1,8 +1,8 @@
 # hookline — Shipped Roadmap Ledger
 
-> tl;dr: completed roadmap entries live in `docs/ledger/` (this file); active work stays in
-> `ROADMAP.md` at the repo root. Provider names here are generic — private local provider ids
-> live only in untracked config (`~/.config/hookline/config`).
+**TL;DR:** completed roadmap entries live in `docs/ledger/` (this file); active work stays in
+`ROADMAP.md` at the repo root. Provider names here are generic — private local provider ids
+live only in untracked config (`~/.config/hookline/config`).
 
 ## Index
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | v1.1 | 2026-06 | first stable: hook intercept, ntfy buttons, injection, safe-prefixes |
 | v1.2 core | 2026-06 | daemon + SSE, status/topic commands, multi-terminal injection, zombie prevention |
-| Multi-provider phases 0–4 | 2026-09-25 | registry + adapter split, local custom provider, opencode plugin adapter, graybox install with real phone-tap gates, docs sweep |
+| v1.3.0 | 2026-09-25 | first tagged release; multi-provider revival phases 0–4 — registry + adapter split, local custom provider, opencode plugin adapter, graybox install with real phone-tap gates, docs sweep |
 
 ## v1.1 — Stable (archived)
 
@@ -36,7 +36,7 @@
 - [x] **`hookline topic` command** — `hookline topic` shows the current topic; `hookline topic <name>` validates the name, rewrites `HOOKLINE_TOPIC` in config, and restarts the daemon in one step (avoids manual config editing when switching topics after an ntfy ban)
 - [x] **AskUserQuestion hook** — warning notification sent with first-option-or-dismiss behavior; `defer` keeps Claude's own picker visible while Allow injects `1`+Enter and Deny injects Escape
 
-## Multi-provider revival — phases 0–4 (archived 2026-09-25)
+## v1.3.0 — Multi-provider revival, phases 0–4 (archived 2026-09-25)
 
 Plan: `~/.claude/plans/hookline-multi-provider.md`.
 

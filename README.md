@@ -31,8 +31,11 @@ Each provider plugs into a provider-neutral core through an adapter: Claude Code
 ```bash
 git clone https://github.com/tsyche/hookline.git
 cd hookline
-bash install.sh
+just install          # or: bash install.sh
 ```
+
+Run `just` in the repo to see every development command (`lint`, `golden`,
+`check-docs`, `test`, …).
 
 The installer will:
 
