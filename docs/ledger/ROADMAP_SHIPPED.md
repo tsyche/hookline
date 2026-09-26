@@ -58,3 +58,10 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
 - **Phase 4** — wording sweep: README made provider-neutral (tl;dr, Providers section,
   adding-an-adapter contract, `HOOKLINE_PROVIDERS` docs, OpenCode install/terminal rows);
   `just lint` green
+
+## Post-v1.3.0 — release pipeline confirmed (archived 2026-09-26)
+
+- [x] 2026-09-26 — **Push and confirm v1.3.0** — proves the release pipeline end-to-end
+  (tag + generated notes on the `VERSION` bump); 6 commits were queued (~0.5h).
+  Verified: release workflow run 36214305762 published `v1.3.0` automatically; a
+  follow-up docs-only push re-ran CI green without retriggering a release.
