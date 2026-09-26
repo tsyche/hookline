@@ -11,6 +11,7 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.1 | 2026-06 | first stable: hook intercept, ntfy buttons, injection, safe-prefixes |
 | v1.2 core | 2026-06 | daemon + SSE, status/topic commands, multi-terminal injection, zombie prevention |
 | v1.3.0 | 2026-09-25 | first tagged release; multi-provider revival phases 0–4 — registry + adapter split, local custom provider, opencode plugin adapter, graybox install with real phone-tap gates, docs sweep |
+| Phase 5 | 2026-09-26 | reliability: `hookline doctor`, heartbeat + launchd watchdog, daemon unit tests |
 
 ## v1.1 — Stable (archived)
 
@@ -65,3 +66,24 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
   (tag + generated notes on the `VERSION` bump); 6 commits were queued (~0.5h).
   Verified: release workflow run 36214305762 published `v1.3.0` automatically; a
   follow-up docs-only push re-ran CI green without retriggering a release.
+
+## Phase 5 — Reliability & self-healing (shipped 2026-09-26)
+
+1. **`hookline doctor` — diagnose & self-heal** (~1–2h)
+   - One command that checks the whole chain and fixes what it can: daemon liveness (real socket ping, not just process presence), resolved `python3`/`tmux` paths, launchd registration, stale socket files, ntfy reachability, topic subscription reminder
+   - Auto-restarts a hung/dead daemon; flags an asdf-shimmed `python3` that would break the hook
+   - Motivated by a multi-hour debugging session where a hung daemon + asdf-broken `python3` silently dropped notifications and `hookline status` gave a misleading "NOT running"
+   - Quick win; turns "why didn't I get notified?" into a single self-explaining command
+   - Acceptance: a sandboxed regression recipe (same shape as `scripts/hook-golden.sh`) runs in CI alongside `lint`, `golden`, `check-docs`
+
+2. **Daemon health watchdog** (~2–3h)
+   - `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days
+   - The hook already falls back to legacy polling when the daemon is unresponsive (notifications still fire), but the instant-SSE path stays degraded until a manual restart
+   - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
+   - Promoted from the medium-term list after silent notification loss bit the daily driver
+   - Acceptance: heartbeat staleness covered by the daemon unit-test recipe (Phase 5 item 3), so watchdog lands with tests, not after
+
+3. **Daemon unit tests** (~2–3h)
+   - The Python daemon has zero automated coverage today — only the shell hook has golden tests, so registry/routing regressions ship undetected
+   - stdlib `unittest` (no new deps) covering session registry mapping, response-file routing, tmux vs response-only paths, heartbeat staleness
+   - Acceptance: a new `test-daemon` recipe runs in CI alongside `lint`, `golden`, and `check-docs`

@@ -44,39 +44,32 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **`hookline doctor`** — turns "why didn't I get notified?" into one self-explaining command (~1–2h)
-2. **Daemon health watchdog** — closes the known silent-degradation failure mode that already cost daily-driver notifications (~2–3h)
-3. **Daemon unit tests** — the Python daemon has zero coverage; registry/routing regressions ship undetected (~2–3h)
+1. **Release smoke check** — the pipeline is now the only release path; assert tag matches `VERSION` (~0.5h)
+2. **Install/uninstall sandbox tests** — closes the last manual-only test gap in the install chain (~1–2h)
+3. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
 
 ## Phase 5 — Reliability & self-healing (next)
 
-1. **`hookline doctor` — diagnose & self-heal** (~1–2h)
-   - One command that checks the whole chain and fixes what it can: daemon liveness (real socket ping, not just process presence), resolved `python3`/`tmux` paths, launchd registration, stale socket files, ntfy reachability, topic subscription reminder
-   - Auto-restarts a hung/dead daemon; flags an asdf-shimmed `python3` that would break the hook
-   - Motivated by a multi-hour debugging session where a hung daemon + asdf-broken `python3` silently dropped notifications and `hookline status` gave a misleading "NOT running"
-   - Quick win; turns "why didn't I get notified?" into a single self-explaining command
-   - Acceptance: a sandboxed regression recipe (same shape as `scripts/hook-golden.sh`) runs in CI alongside `lint`, `golden`, `check-docs`
+> Items 1–3 (`hookline doctor`, daemon health watchdog, daemon unit tests) shipped
+> 2026-09-26 — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-2. **Daemon health watchdog** (~2–3h)
-   - `KeepAlive` only restarts the daemon if it *exits*; a hung-but-alive process (observed after SSE 502 storms / system sleep, where `urllib` freezes despite its timeout) goes undetected for days
-   - The hook already falls back to legacy polling when the daemon is unresponsive (notifications still fire), but the instant-SSE path stays degraded until a manual restart
-   - Daemon touches a heartbeat timestamp each loop; a lightweight checker (separate launchd `StartInterval` job, or the hook itself) restarts the daemon if the heartbeat is stale. Also harden the SSE thread against silent `urllib` hangs (socket-level read timeout, or a maintained SSE client)
-   - Promoted from the medium-term list after silent notification loss bit the daily driver
-   - Acceptance: heartbeat staleness covered by the daemon unit-test recipe (Phase 5 item 3), so watchdog lands with tests, not after
-
-3. **Daemon unit tests** (~2–3h)
-   - The Python daemon has zero automated coverage today — only the shell hook has golden tests, so registry/routing regressions ship undetected
-   - stdlib `unittest` (no new deps) covering session registry mapping, response-file routing, tmux vs response-only paths, heartbeat staleness
-   - Acceptance: a new `test-daemon` recipe runs in CI alongside `lint`, `golden`, and `check-docs`
-
-4. **Release smoke check** (~0.5h)
+1. **Release smoke check** (~0.5h)
    - Post-push script asserting the latest GitHub release tag matches `VERSION`
    - Catches a silent release-pipeline regression (the pipeline is now the only release path)
 
-5. **Install/uninstall sandbox tests** (~1–2h)
+2. **Install/uninstall sandbox tests** (~1–2h)
    - `install.sh` / `uninstall.sh` were only graybox-tested by hand in Phase 3
    - Recipe runs both in a temp `HOME` + fake `~/.claude` and asserts settings-JSON
      registration pairs invert exactly, plugin file appears/disappears
+
+3. **Heartbeat ages in `hookline status`** (~0.5h)
+   - Doctor shows heartbeat/SSE age; the everyday `status` command doesn't — same
+     data, one field per line
+
+4. **Daemon log rotation / quieter SSE reconnects** (~0.5h)
+   - `daemon.log` grows unbounded; with the 300s SSE read timeout a healthy idle
+     connection now reconnects (and logs) every ~5 min — cap size or log only
+     state changes
 
 ## Phase 6 — Onboarding & contributors
 
