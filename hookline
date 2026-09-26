@@ -200,7 +200,7 @@ cmd_status() {
     echo "  topic:         ${HOOKLINE_TOPIC:-"(not set)"}"
     echo "  server:        ${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
     echo "  grace period:  ${HOOKLINE_GRACE_PERIOD:-20}s"
-    echo "  phone timeout: ${HOOKLINE_PHONE_TIMEOUT:-60}s"
+    echo "  phone timeout: ${HOOKLINE_PHONE_TIMEOUT:-900}s"
     echo "  max retries:   ${HOOKLINE_MAX_RETRIES:-3}"
     echo "  providers:     ${HOOKLINE_PROVIDERS:-"(all — registry unset)"}"
     [ -n "$HOOKLINE_NTFY_USERNAME" ] && echo "  auth:          ${HOOKLINE_NTFY_USERNAME}@..."
