@@ -20,6 +20,16 @@ done
 rm -rf "$HOOK_DIR_DST"
 echo "Removed $HOOK_DIR_DST"
 
+# Remove the heartbeat watchdog (unload first so it can't restart a daemon
+# that no longer exists)
+WATCHDOG_PLIST="${HOME}/Library/LaunchAgents/com.hookline.watchdog.plist"
+if [ -f "$WATCHDOG_PLIST" ]; then
+  launchctl unload "$WATCHDOG_PLIST" 2>/dev/null || true
+  rm -f "$WATCHDOG_PLIST"
+  echo "Removed watchdog launchd job"
+fi
+rm -f "${HOME}/.local/share/hookline/watchdog.py"
+
 # Remove the opencode plugin registration (opencode's own config is untouched)
 OPC_PLUGIN="${HOME}/.config/opencode/plugins/hookline.js"
 if [ -f "$OPC_PLUGIN" ]; then

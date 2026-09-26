@@ -9,6 +9,8 @@ DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
 DAEMON_PID="${HOME}/.local/share/hookline/daemon.pid"
 PLIST_LABEL="com.hookline.daemon"
 PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+WATCHDOG_PLIST_LABEL="com.hookline.watchdog"
+WATCHDOG_PLIST_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 DISABLED_FLAG="${HOME}/.config/hookline/disabled"
@@ -25,6 +27,7 @@ usage: hookline <command>
 
 Commands:
   status          Show config, hook registration, daemon status, connectivity
+  doctor          Diagnose the whole notification chain; fix what it can
   topic [name]    Show current topic, or switch to a new one and restart daemon
   daemon start    Start the hookline daemon (registers with launchd)
   daemon stop     Stop the daemon
@@ -263,10 +266,224 @@ cmd_status() {
   echo
 }
 
+# ── doctor ─────────────────────────────────────────────────────────────────────
+# Diagnoses the whole notification chain and fixes what it can. Set
+# HOOKLINE_DOCTOR_NO_FIX=1 for report-only mode (never touches launchd —
+# used by the sandboxed doctor-test recipe).
+
+DOC_OK=0
+DOC_FAIL=0
+DOC_FIXED=0
+
+doc_ok()   { echo "  ok    $*"; DOC_OK=$((DOC_OK + 1)); }
+doc_fail() { echo "  FAIL  $*"; DOC_FAIL=$((DOC_FAIL + 1)); }
+doc_fixed(){ echo "  fixed $*"; DOC_FIXED=$((DOC_FIXED + 1)); }
+doc_skip() { echo "  skip  $*"; }
+doc_info() { echo "  info  $*"; }
+
+doctor_no_fix() { [ "${HOOKLINE_DOCTOR_NO_FIX:-0}" = 1 ]; }
+
+# Try to bring the daemon back; returns 0 only if it answers afterwards.
+doctor_restart_daemon() {
+  if doctor_no_fix; then
+    doc_skip "fix disabled (HOOKLINE_DOCTOR_NO_FIX)"
+    return 1
+  fi
+  if ! command -v launchctl >/dev/null 2>&1; then
+    doc_skip "cannot restart: launchctl unavailable (macOS only)"
+    return 1
+  fi
+  if [ ! -f "$PLIST_DST" ]; then
+    doc_skip "cannot restart: daemon not installed"
+    return 1
+  fi
+  cmd_daemon restart >/dev/null 2>&1
+  daemon_running
+}
+
+cmd_doctor() {
+  DOC_OK=0; DOC_FAIL=0; DOC_FIXED=0
+  echo "=== hookline doctor ==="
+  echo
+
+  echo "── Interpreter"
+  if [ -x /usr/bin/python3 ]; then
+    doc_ok "python3: /usr/bin/python3"
+  else
+    _py=$(command -v python3 2>/dev/null || true)
+    case "$_py" in
+      */shims/*|*/.asdf/*)
+        doc_fail "python3 is an asdf shim ($_py) — breaks the daemon handoff; install a system python3" ;;
+      "")
+        doc_fail "python3 not found" ;;
+      *)
+        doc_ok "python3: $_py" ;;
+    esac
+  fi
+  for _dep in jq curl; do
+    if command -v "$_dep" >/dev/null 2>&1; then
+      doc_ok "$_dep found"
+    else
+      doc_fail "$_dep missing — run: brew install $_dep"
+    fi
+  done
+  _tmux=$(command -v tmux 2>/dev/null || true)
+  [ -z "$_tmux" ] && [ -x /opt/homebrew/bin/tmux ] && _tmux=/opt/homebrew/bin/tmux
+  [ -z "$_tmux" ] && [ -x /usr/local/bin/tmux ] && _tmux=/usr/local/bin/tmux
+  if [ -n "$_tmux" ]; then
+    doc_ok "tmux: $_tmux"
+  else
+    doc_skip "tmux not found — tmux injection unavailable (single-terminal still works)"
+  fi
+  echo
+
+  echo "── Config ($CONFIG_FILE)"
+  HOOKLINE_TOPIC=""
+  if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE" 2>/dev/null
+    if [ -n "$HOOKLINE_TOPIC" ]; then
+      doc_ok "topic: $HOOKLINE_TOPIC"
+    else
+      doc_fail "topic not set — run: hookline topic <name>"
+    fi
+  else
+    doc_fail "config not found — run: bash install.sh"
+  fi
+  echo
+
+  echo "── Hook & registration"
+  if [ -f "$HOOK_DST" ]; then
+    doc_ok "hook file installed"
+  else
+    doc_fail "hook file missing — run: bash install.sh"
+  fi
+  for _settings in "$SETTINGS" "$SETTINGS_BB"; do
+    [ -f "$_settings" ] || continue
+    if jq -e '.hooks.PreToolUse[]? | select(.hooks[]?.command? | contains("hookline"))' "$_settings" &>/dev/null; then
+      doc_ok "hook registered in $_settings"
+    else
+      doc_fail "hook NOT registered in $_settings — run: bash install.sh"
+    fi
+  done
+  [ -f "$SETTINGS" ] || [ -f "$SETTINGS_BB" ] || doc_skip "no Claude-family settings files found"
+  if [ -d "${HOME}/.config/opencode" ]; then
+    if [ -f "${HOME}/.config/opencode/plugins/hookline.js" ]; then
+      doc_ok "OpenCode plugin installed"
+    else
+      doc_fail "OpenCode plugin missing — run: bash install.sh"
+    fi
+  fi
+  echo
+
+  echo "── Daemon"
+  if [ ! -f "$PLIST_DST" ]; then
+    doc_fail "daemon not installed — run: bash install.sh"
+  else
+    if command -v launchctl >/dev/null 2>&1 && ! doctor_no_fix; then
+      if launchctl list "$PLIST_LABEL" &>/dev/null; then
+        doc_ok "launchd: daemon job loaded"
+      else
+        if launchctl load "$PLIST_DST" 2>/dev/null && launchctl list "$PLIST_LABEL" &>/dev/null; then
+          doc_fixed "launchd: daemon job was unloaded — loaded"
+        else
+          doc_fail "launchd: daemon job not loaded — run: hookline daemon start"
+        fi
+      fi
+    else
+      doc_skip "launchd checks disabled (report-only mode or no launchctl)"
+    fi
+
+    _stale_reason=""
+    if daemon_running; then
+      info=$(daemon_query)
+      _pid=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('pid','?'))" 2>/dev/null)
+      _pending=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('pending',0))" 2>/dev/null)
+      _hb=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('heartbeat_age','-999'))" 2>/dev/null)
+      _sse=$(echo "$info" | "$PYBIN" -c "import json,sys; print(json.load(sys.stdin).get('sse_age','-999'))" 2>/dev/null)
+      doc_ok "daemon responsive (pid=${_pid:-?} pending=${_pending:-0})"
+
+      # -999/empty = key absent = daemon predates the heartbeat build
+      if [ -z "$_hb" ] || [ "$_hb" = "-999" ]; then
+        doc_skip "heartbeat age unknown (old daemon build — restart to upgrade)"
+      elif [ "$_hb" -gt 120 ] 2>/dev/null; then
+        _stale_reason="heartbeat ${_hb}s old"
+      else
+        doc_ok "heartbeat ${_hb}s"
+        if [ -z "$_sse" ] || [ "$_sse" = "-999" ]; then
+          doc_skip "sse age unknown (old daemon build)"
+        elif [ "$_sse" -lt 0 ] || [ "$_sse" -gt 600 ] 2>/dev/null; then
+          _stale_reason="SSE stream ${_sse}s stale (phone responses would never arrive)"
+        else
+          doc_ok "sse ${_sse}s"
+        fi
+      fi
+    else
+      if [ -S "$DAEMON_SOCK" ]; then
+        _stale_reason="daemon not answering (stale socket file)"
+      else
+        _stale_reason="daemon not running"
+      fi
+    fi
+
+    if [ -n "$_stale_reason" ]; then
+      if [ "${_pending:-0}" -gt 0 ] 2>/dev/null; then
+        doc_fail "$_stale_reason — ${_pending} approval(s) in flight; NOT auto-restarting (run: hookline daemon restart after they resolve)"
+      elif doctor_restart_daemon; then
+        doc_fixed "$_stale_reason — daemon restarted"
+        doc_ok "daemon responsive after restart"
+      else
+        doc_fail "$_stale_reason — could not auto-fix; run: hookline daemon restart (log: ~/.local/share/hookline/daemon.log)"
+      fi
+    fi
+  fi
+  echo
+
+  echo "── Watchdog"
+  if [ ! -f "$WATCHDOG_PLIST_DST" ]; then
+    doc_fail "watchdog not installed — run: bash install.sh (restarts a hung daemon every 60s)"
+  elif command -v launchctl >/dev/null 2>&1 && ! doctor_no_fix; then
+    if launchctl list "$WATCHDOG_PLIST_LABEL" &>/dev/null; then
+      doc_ok "launchd: watchdog job loaded"
+    elif launchctl load "$WATCHDOG_PLIST_DST" 2>/dev/null; then
+      doc_fixed "watchdog job was unloaded — loaded"
+    else
+      doc_fail "watchdog job not loaded — run: bash install.sh"
+    fi
+  else
+    doc_skip "launchd checks disabled (report-only mode or no launchctl)"
+  fi
+  echo
+
+  echo "── Connectivity"
+  if [ -z "${HOOKLINE_TOPIC:-}" ] || [ ! -f "$CONFIG_FILE" ]; then
+    doc_skip "skipped (no config)"
+  else
+    _server="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+    AUTH_ARGS=()
+    [ -n "${HOOKLINE_NTFY_USERNAME:-}" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${AUTH_ARGS[@]}" "${_server}/")
+    if [ "$http_code" = "200" ] || [ "$http_code" = "404" ]; then
+      doc_ok "reachable: $_server (HTTP $http_code)"
+      doc_info "phone should subscribe to '$HOOKLINE_TOPIC' and '$HOOKLINE_TOPIC-response'"
+    elif [ "$http_code" = "000" ]; then
+      doc_fail "unreachable: $_server (connection failed — banned? down?)"
+    else
+      doc_fail "unreachable: $_server (HTTP $http_code)"
+    fi
+  fi
+  echo
+
+  echo "── Summary"
+  echo "  $DOC_OK ok, $DOC_FIXED fixed, $DOC_FAIL failed"
+  [ "$DOC_FAIL" -eq 0 ]
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-help}" in
   status)         cmd_status ;;
+  doctor)         cmd_doctor ;;
   topic)          shift; cmd_topic "$@" ;;
   daemon)         shift; cmd_daemon "$@" ;;
   enable)         cmd_enable ;;

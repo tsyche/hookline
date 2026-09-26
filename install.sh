@@ -9,6 +9,11 @@ DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
 PLIST_SRC="${REPO}/daemon/com.hookline.daemon.plist"
 PLIST_LABEL="com.hookline.daemon"
 PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+WATCHDOG_SRC="${REPO}/daemon/watchdog.py"
+WATCHDOG_DST="${HOME}/.local/share/hookline/watchdog.py"
+WATCHDOG_PLIST_SRC="${REPO}/daemon/com.hookline.watchdog.plist"
+WATCHDOG_PLIST_LABEL="com.hookline.watchdog"
+WATCHDOG_PLIST_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
 CONFIG_DIR="${HOME}/.config/hookline"
 CONFIG_FILE="${CONFIG_DIR}/config"
 LOG_DIR="${HOME}/.local/share/hookline"
@@ -113,6 +118,17 @@ launchctl unload "$PLIST_DST" 2>/dev/null || true
 launchctl load "$PLIST_DST"
 echo "Daemon registered with launchd and started"
 
+# Install the heartbeat watchdog — a StartInterval job that restarts a hung
+# daemon (KeepAlive only catches processes that actually exit).
+cp "$WATCHDOG_SRC" "$WATCHDOG_DST"
+chmod +x "$WATCHDOG_DST"
+sed -e "s|HOOKLINE_WATCHDOG_PATH|$WATCHDOG_DST|g" \
+    -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
+    "$WATCHDOG_PLIST_SRC" > "$WATCHDOG_PLIST_DST"
+launchctl unload "$WATCHDOG_PLIST_DST" 2>/dev/null || true
+launchctl load "$WATCHDOG_PLIST_DST"
+echo "Heartbeat watchdog registered with launchd"
+
 # Register the hook in a Claude-family settings file, keyed by provider. The
 # command passes the provider id so HOOKLINE_PROVIDERS can enable/disable each
 # registration independently; the `[ -x ]` guard keeps settings valid (and
@@ -168,4 +184,5 @@ echo
 echo "=== Installation complete ==="
 echo "Subscribe to topic '${HOOKLINE_TOPIC}' in the ntfy app on your phone."
 echo "Run 'hookline status' to verify everything is running."
+echo "Run 'hookline doctor' if notifications ever stop arriving."
 echo "Run 'bash scripts/test.sh' to send a test notification."

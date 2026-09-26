@@ -26,10 +26,15 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   response, tmux sessions are injected via `tmux send-keys` directly, everything else gets a
   response file that the hook process (a child of the terminal) reads — injection stays in
   the process tree that already has macOS Accessibility trust. Falls back to inline polling
-  when the daemon is unavailable.
-- **CLI** (`hookline`) — Bash. `status`, `topic`, `daemon start/stop/restart/status`.
+  when the daemon is unavailable. Touches `heartbeat` (serve loop) and `sse-heartbeat`
+  (SSE connect/receive, bounded by a 300s read timeout); `daemon/watchdog.py` is a
+  launchd `StartInterval` job that restarts the daemon when either goes stale — KeepAlive
+  only catches processes that exit.
+- **CLI** (`hookline`) — Bash. `status`, `doctor`, `topic`, `daemon start/stop/restart/status`.
 - **Install/uninstall** (`install.sh`, `uninstall.sh`), **tests** (`scripts/test.sh`,
-  `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network).
+  `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network;
+  `tests/test_daemon.py` — daemon unit tests; `scripts/doctor-test.sh` — sandboxed
+  doctor report tests).
 
 ## Key commands
 
@@ -37,8 +42,10 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
 just install        # install hook, daemon, CLI, launchd registration
 just test           # send a test notification
 just golden         # hook stdout contract tests (sandboxed, no network)
+just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
+just doctor-test    # sandboxed `hookline doctor` report tests (no network, no launchd)
 just status         # config, daemon status, connectivity, recent log
-just lint           # shellcheck the shell scripts + py_compile the daemon
+just lint           # shellcheck the shell scripts + py_compile the Python files
 just logs           # tail hook + daemon logs
 just uninstall      # remove everything
 ```

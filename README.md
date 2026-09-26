@@ -45,7 +45,8 @@ The installer will:
 3. Write config to `~/.config/hookline/config`
 4. Install the hook to `~/.local/share/hookline/hooks/hookline.sh`
 5. Install the daemon to `~/.local/share/hookline/daemon/hookline-daemon`
-6. Register the daemon with launchd (starts automatically on login)
+6. Register the daemon and the heartbeat watchdog with launchd (the watchdog
+   restarts a hung daemon — `KeepAlive` only catches processes that exit)
 7. Register the hook in `~/.claude/settings.json` (plus a second Claude-profile settings file when one is present on the machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
 
@@ -112,6 +113,7 @@ Changes take effect immediately — no reinstall needed.
 
 ```bash
 hookline status               # show config, daemon status, connectivity, recent log
+hookline doctor               # diagnose the whole chain; fixes a dead/hung daemon
 hookline topic                # show the current ntfy topic
 hookline topic <name>         # switch topic, update config, restart daemon
 hookline daemon start         # start the daemon
@@ -120,19 +122,29 @@ hookline daemon restart       # restart the daemon
 hookline daemon status        # show daemon pid, active sessions, pending approvals
 ```
 
+If phone notifications stop arriving, run `hookline doctor` — it checks the
+interpreter, config, hook registration, daemon liveness (real socket ping plus
+heartbeat ages), launchd jobs, and ntfy reachability, and restarts a dead or
+hung daemon automatically.
+
 ## Test
 
 ```bash
+just golden         # hook stdout contract tests (sandboxed, no network)
+just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
+just doctor-test    # sandboxed `hookline doctor` report tests
 bash scripts/test.sh
 ```
 
-Sends a test notification with Allow/Deny buttons and reports the response.
+`scripts/test.sh` sends a test notification with Allow/Deny buttons and reports
+the response; the other three run offline and also gate CI.
 
 ## Logs
 
 ```bash
 tail -f ~/.local/share/hookline/hookline.log   # hook log
 tail -f ~/.local/share/hookline/daemon.log     # daemon log
+tail -f ~/.local/share/hookline/watchdog.log   # watchdog restarts
 ```
 
 ## Uninstall

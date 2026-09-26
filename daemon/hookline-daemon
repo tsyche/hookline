@@ -25,6 +25,31 @@ PID_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.pid")
 LOG_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.log")
 CONFIG_PATH   = os.path.expanduser("~/.config/hookline/config")
 THROTTLE_PATH = os.path.expanduser("~/.local/share/hookline/ntfy-throttle")
+HEARTBEAT_PATH     = os.path.expanduser("~/.local/share/hookline/heartbeat")
+SSE_HEARTBEAT_PATH = os.path.expanduser("~/.local/share/hookline/sse-heartbeat")
+
+# Bounds a silently-dead SSE stream: a read that never returns raises at this
+# timeout and forces a reconnect (which re-touches the SSE heartbeat). Healthy
+# idle connections reconnect on the same cadence — cheap — while a frozen
+# urllib read leaves the heartbeat stale so the watchdog can restart us.
+SSE_READ_TIMEOUT = 300
+
+
+def touch(path):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
+
+
+def age(path):
+    """Seconds since path was last written, or -1 when missing."""
+    try:
+        return int(time.time() - os.path.getmtime(path))
+    except OSError:
+        return -1
 
 
 def _find_tmux():
@@ -132,10 +157,12 @@ class Daemon:
                 url    = f"{server}/{topic}-response/json"
                 self.log.info(f"SSE connecting to {url}")
                 req = urllib.request.Request(url, headers=self._ntfy_headers(config))
-                with urllib.request.urlopen(req, timeout=600) as resp:
+                with urllib.request.urlopen(req, timeout=SSE_READ_TIMEOUT) as resp:
+                    touch(SSE_HEARTBEAT_PATH)
                     for raw in resp:
                         if self._stop.is_set():
                             return
+                        touch(SSE_HEARTBEAT_PATH)
                         line = raw.decode('utf-8').strip()
                         if not line:
                             continue
@@ -292,6 +319,8 @@ class Daemon:
                         'sessions': len(self.sessions),
                         'pending':  len(self.pending),
                     }
+                status['heartbeat_age'] = age(HEARTBEAT_PATH)
+                status['sse_age']       = age(SSE_HEARTBEAT_PATH)
                 conn.sendall(json.dumps(status).encode())
 
             else:
@@ -311,6 +340,7 @@ class Daemon:
         server.settimeout(1.0)
         self.log.info(f"listening on {SOCKET_PATH}")
         while not self._stop.is_set():
+            touch(HEARTBEAT_PATH)
             try:
                 conn, _ = server.accept()
                 threading.Thread(
@@ -338,6 +368,8 @@ class Daemon:
         signal.signal(signal.SIGINT, on_signal)
 
         self.log.info(f"hookline daemon starting pid={os.getpid()} tmux={TMUX_BIN}")
+        touch(HEARTBEAT_PATH)
+        touch(SSE_HEARTBEAT_PATH)
         threading.Thread(target=self.sse_listener, daemon=True).start()
         self.serve()
 

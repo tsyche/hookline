@@ -19,4 +19,6 @@ jobs:
       - uses: extractions/setup-just@v4
       - run: just lint
       - run: just golden
+      - run: just test-daemon
+      - run: just doctor-test
       - run: just check-docs

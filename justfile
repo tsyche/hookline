@@ -40,7 +40,7 @@ daemon-restart:
 lint:
     @command -v shellcheck >/dev/null || { echo "shellcheck not installed — run: brew install shellcheck"; exit 1; }
     shellcheck hooks/hookline.sh hooks/core.sh hooks/adapters/*.sh install.sh uninstall.sh hookline scripts/*.sh
-    /usr/bin/python3 -m py_compile daemon/hookline-daemon
+    /usr/bin/python3 -m py_compile daemon/hookline-daemon daemon/watchdog.py tests/*.py
     @echo "lint ok"
 
 # Auto-fix is a no-op for shell (shellcheck has no fixer) — kept as convention alias
@@ -49,6 +49,14 @@ lintfix: lint
 # Golden stdout tests for the hook entry point (sandboxed, no network)
 golden:
     bash scripts/hook-golden.sh
+
+# Unit tests for the Python daemon (registry, routing, heartbeat, watchdog)
+test-daemon:
+    /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
+
+# Sandboxed checks for `hookline doctor` (fake HOME, no network, no launchd)
+doctor-test:
+    bash scripts/doctor-test.sh
 
 # Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
 sync-docs:
