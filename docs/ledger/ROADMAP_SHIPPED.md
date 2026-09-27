@@ -16,6 +16,7 @@ live only in untracked config (`~/.config/hookline/config`).
 | Phase 5b | 2026-09-26 | install/uninstall sandbox tests, heartbeat ages in `status`, log rotation + quiet SSE, smoke target-commit check |
 | v1.4.0 | 2026-09-26 | tagged release covering the Phase 5 / 5b rows above (doctor, watchdog, tests, roadmap phase rework) |
 | CHANGELOG | 2026-09-27 | Keep-a-Changelog file created, backfilled from v1.3.0 / v1.4.0 tags, `[Unreleased]` for pending work |
+| v1.5.0 | 2026-09-27 | tagged release covering the Phase 6 rows below (codex adapter, response-file hardening, MCP matcher, changelog-promote, grok spike) |
 
 ## v1.1 — Stable (archived)
 
@@ -124,3 +125,45 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
 6. **CHANGELOG.md** (~1h)
    - Releases now publish generated notes automatically; a tracked CHANGELOG aggregates them per version so the repo shows release history without opening GitHub
    - Pulled forward from the old Future list now that release automation exists
+
+## Phase 6 — codex adapter + hardening (shipped 2026-09-27, v1.5.0)
+
+6. **codex adapter (interim hack)** — committed `689f939` 2026-09-27, released in v1.5.0
+   - Flow A over codex's `PermissionRequest` hook: empty stdout declines → codex's own approval
+     menu shows; phone answer arrives as keystrokes (Enter approves — option 1 preselected,
+     Esc cancels; both verified against codex 0.157.1 in tmux)
+   - Injection follows the claude pattern: watcher injects into its own `$TMUX_PANE` via
+     `tmux send-keys` inside tmux (pane-exact, works detached — daemon keys stay
+     claude-hardcoded, hence response-only `ADAPTER_RESPONSE_ONLY=1`), frontmost-app
+     osascript on bare terminals (claude's non-tmux path)
+   - Rollout JSONL growth = local-answer signal (raw count — the rollout doesn't grow while
+     the menu sits open)
+   - Registration merges a `PermissionRequest` entry into `~/.codex/hooks.json` (foreign hooks
+     preserved, exact inverse on uninstall, round-trip tested); off until `codex` joins
+     `HOOKLINE_PROVIDERS`; one-time `/hooks` trust review (doctor reports registered + trusted)
+   - Live E2E proven with real ntfy taps: allow → file created, deny → menu canceled,
+     retry → `-r1` resend → approve, stale/cancelled req ignored
+   - Interim by design: rip out when codex ships a real remote-approval integration; safe
+     prefixes emit a foreground `allow` so read-only commands skip the menu entirely
+   - Tests: 6 new golden cases (24 total) + install round-trip asserts (45); all 8 gates green
+
+7. **Response-file hardening** — implemented 2026-09-27, released in v1.5.0
+   - Response files use predictable `/tmp` names — any local process could write an allow decision; switch to `mktemp` + `600` perms
+   - Ranks in the Recommended Next 3: security debt before wider distribution
+   - Acceptance: no predictable response path remains in core; golden/install tests updated
+   - Done: hook now `mktemp` + `0600` in private `$TMPDIR` (pid+random fallback); daemon recreates at `0600` on every retry round; daemon test asserts the mode
+
+8. **codex MCP matcher coverage** — implemented 2026-09-27, released in v1.5.0
+   - README documents `Bash` + `apply_patch` only; extend the `PermissionRequest` matcher to `mcp__*` tools so MCP approvals notify too
+   - Acceptance: MCP tool request produces a phone notification and injects correctly
+   - Done: matcher `Bash|apply_patch|mcp__.*`, golden `codex-mcp-ask` case, install-test matcher assert; E2E still on codex's own approval menu
+
+9. **CHANGELOG release sync** — implemented 2026-09-27, released in v1.5.0
+   - Automate promoting `[Unreleased]` → `## [x.y.z]` on a `VERSION` bump (release workflow step or just recipe) so the tracked CHANGELOG can't rot
+   - Done: `just changelog-promote` (idempotent; promotes heading + link footer); CHANGELOG header documents the release hygiene step
+
+10. **grok approval-seam spike** — done 2026-09-27: **seam CONFIRMED** (grok 1.0.41)
+    - `~/.grok/hooks/*.json` global hooks are always trusted; Claude-compatible `PreToolUse` with stdin JSON (`toolName`/`toolInput` camelCase) and stdout decisions `allow|deny|ask|defer` (fail-open, regex matchers, `Bash`→`run_terminal_command` aliases)
+    - `ask` forces grok's permission prompt even when policy would auto-approve — the Flow A seam exists without codex's decline trick
+    - Watch-outs: default hook timeout is 5s (must set `timeout` ≥ grace period); approval-menu key profile (Enter/Esc?) unverified
+    - Next: grok adapter (~3–4h: adapter + `~/.grok/hooks` registration + live E2E of prompt keys)

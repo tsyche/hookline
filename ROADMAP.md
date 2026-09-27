@@ -33,6 +33,9 @@
 > **v1.4.0 tagged 2026-09-26** — Phase 5 reliability fully shipped (doctor, watchdog,
 > daemon tests, release smoke check + target check, install/uninstall tests,
 > heartbeat ages in status, log rotation / quiet SSE).
+> **v1.5.0 tagged 2026-09-27** — codex adapter live (interim `PermissionRequest` Flow A),
+> response-file hardening (`mktemp` + `0600`), codex MCP matcher, `just changelog-promote`,
+> grok seam spike confirmed. Archived in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
 ## Goals
 
@@ -49,8 +52,8 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 ## Recommended Next 3
 
 1. **`check-gates` recipe** — one local command mirrors every CI gate so the lists can't drift (~0.3h)
-2. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
-3. **In-repo git hooks** — fresh clones never get the `check-docs` pre-commit hook today (~1h)
+2. **opencode plugin tests** — the live-used opencode adapter is the only layer with zero test coverage (~1–2h)
+3. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
 
 ## Phase 5 — Reliability & self-healing (complete)
 
@@ -89,45 +92,41 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - One recipe running every gate CI runs (`lint`, `golden`, `test-daemon`, `doctor-test`, `status-test`, `install-test`, `release-smoke-test`, `check-docs`); `ci.yml` calls the recipe instead of listing steps, so local and CI gate lists cannot drift
    - Acceptance: the recipe runs green locally; CI workflow reduced to the single recipe call
 
-6. **codex adapter (interim hack)** — committed `689f939` 2026-09-27, pending push + `VERSION` 1.5.0 release
-   - Flow A over codex's `PermissionRequest` hook: empty stdout declines → codex's own approval
-     menu shows; phone answer arrives as keystrokes (Enter approves — option 1 preselected,
-     Esc cancels; both verified against codex 0.157.1 in tmux)
-   - Injection follows the claude pattern: watcher injects into its own `$TMUX_PANE` via
-     `tmux send-keys` inside tmux (pane-exact, works detached — daemon keys stay
-     claude-hardcoded, hence response-only `ADAPTER_RESPONSE_ONLY=1`), frontmost-app
-     osascript on bare terminals (claude's non-tmux path)
-   - Rollout JSONL growth = local-answer signal (raw count — the rollout doesn't grow while
-     the menu sits open)
-   - Registration merges a `PermissionRequest` entry into `~/.codex/hooks.json` (foreign hooks
-     preserved, exact inverse on uninstall, round-trip tested); off until `codex` joins
-     `HOOKLINE_PROVIDERS`; one-time `/hooks` trust review (doctor reports registered + trusted)
-   - Live E2E proven with real ntfy taps: allow → file created, deny → menu canceled,
-     retry → `-r1` resend → approve, stale/cancelled req ignored
-   - Interim by design: rip out when codex ships a real remote-approval integration; safe
-     prefixes emit a foreground `allow` so read-only commands skip the menu entirely
-   - Tests: 6 new golden cases (24 total) + install round-trip asserts (45); all 8 gates green
+6. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
+   [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md)); not approved/built
+   - Claude-compatible `PreToolUse` hooks in `~/.grok/hooks/*.json` (always-trusted), stdout
+     decisions `allow|deny|ask|defer`; `ask` forces grok's prompt — the Flow A seam without
+     codex's decline trick
+   - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
 
-7. **Response-file hardening** — implemented 2026-09-27, pending commit/release
-   - Response files use predictable `/tmp` names — any local process could write an allow decision; switch to `mktemp` + `600` perms
-   - Ranks in the Recommended Next 3: security debt before wider distribution
-   - Acceptance: no predictable response path remains in core; golden/install tests updated
-   - Done: hook now `mktemp` + `0600` in private `$TMPDIR` (pid+random fallback); daemon recreates at `0600` on every retry round; daemon test asserts the mode
+7. **Notify on question events (opencode)** (~TBD after research)
+   - Gap: opencode `AskUserQuestion` never notifies — the plugin only hooks `permission.asked`
+     (confirmed 2026-09-27; delivery chain healthy, 5 tool-prompt notifications delivered same morning)
+   - First step is research only: does the opencode SDK expose any question/ask event at all?
+   - Needs user approval before any investigation beyond a quick read
 
-8. **codex MCP matcher coverage** — implemented 2026-09-27, pending commit/release
-   - README documents `Bash` + `apply_patch` only; extend the `PermissionRequest` matcher to `mcp__*` tools so MCP approvals notify too
-   - Acceptance: MCP tool request produces a phone notification and injects correctly
-   - Done: matcher `Bash|apply_patch|mcp__.*`, golden `codex-mcp-ask` case, install-test matcher assert; E2E still on codex's own approval menu
+8. **opencode plugin tests** (~1–2h)
+   - `hooks/plugins/hookline.js` is the only adapter layer with zero automated coverage —
+     the shell hook has 25 golden cases, the Python daemon has 22 unit tests, the Node plugin has none
+   - `node --test` with a fake `permission.asked` event → assert spawn of `hookline.sh opencode`,
+     payload plumbing, and the bridge reply path
+   - Acceptance: a `test-plugin` recipe runs green locally and joins CI alongside the other gates
 
-9. **CHANGELOG release sync** — implemented 2026-09-27, pending commit/release
-   - Automate promoting `[Unreleased]` → `## [x.y.z]` on a `VERSION` bump (release workflow step or just recipe) so the tracked CHANGELOG can't rot
-   - Done: `just changelog-promote` (idempotent; promotes heading + link footer); CHANGELOG header documents the release hygiene step
+9. **One-line install** (~1–2h)
+   - README install is `git clone` + `just install`; a `curl -fsSL … | bash` path from a pinned
+     GitHub release shortens the 5-minute install goal (release tarball or raw-GitHub fetch —
+     `install.sh` today assumes repo-relative files)
+   - Acceptance: fresh machine install with no git checkout of the repo
 
-10. **grok approval-seam spike** — done 2026-09-27: **seam CONFIRMED** (grok 1.0.41)
-    - `~/.grok/hooks/*.json` global hooks are always trusted; Claude-compatible `PreToolUse` with stdin JSON (`toolName`/`toolInput` camelCase) and stdout decisions `allow|deny|ask|defer` (fail-open, regex matchers, `Bash`→`run_terminal_command` aliases)
-    - `ask` forces grok's permission prompt even when policy would auto-approve — the Flow A seam exists without codex's decline trick
-    - Watch-outs: default hook timeout is 5s (must set `timeout` ≥ grace period); approval-menu key profile (Enter/Esc?) unverified
-    - Next: grok adapter (~3–4h: adapter + `~/.grok/hooks` registration + live E2E of prompt keys)
+10. **Version / upgrade check** (~0.5–1h)
+    - `hookline status` (and/or `doctor`) flags when the latest GitHub release tag is newer than
+      the installed `VERSION` — release-smoke already fetches the latest tag, reuse that
+    - Acceptance: outdated install reports the newer tag; up-to-date install stays quiet
+
+11. **Internal link check** (~0.5h)
+    - Extend `check-docs` to verify relative markdown links (ROADMAP → ledger, README → ROADMAP, …)
+      so cross-doc references can't rot silently
+    - Acceptance: a deliberately broken relative link fails `just check-docs`
 
 ## Phase 7 — Remote control + E2E
 
