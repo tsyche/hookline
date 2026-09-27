@@ -1,8 +1,9 @@
 #!/bin/bash
 # Promote CHANGELOG.md's [Unreleased] section into an entry for the current
 # VERSION, and fix up the link footer. Idempotent — exits 0 when the version
-# entry already exists. Run before bumping VERSION so the changelog entry and
-# the release tag land in the same push.
+# entry already exists. Run right after bumping VERSION (it targets VERSION's
+# current value) so the changelog entry and the release tag land in the
+# same push.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

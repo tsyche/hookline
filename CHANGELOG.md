@@ -6,11 +6,13 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-27
+
 ### Added
 
 - Codex adapter: `PermissionRequest` Flow A hook — declines so codex's own approval menu shows, phone answer injects Enter/Esc into the owning tmux pane (frontmost window outside tmux); registration merges `~/.codex/hooks.json` with one-time `/hooks` trust review
 - Codex MCP matcher coverage — `mcp__*` tools ride the same decline → menu → phone-answer flow
-- `just changelog-promote` — promotes `[Unreleased]` to the current `VERSION` entry (idempotent; run before bumping `VERSION`)
+- `just changelog-promote` — promotes `[Unreleased]` to the current `VERSION` entry (idempotent; run right after bumping `VERSION`, in the same commit)
 - Phase 5 test-gap completion: sandboxed install round-trip, status report, and release smoke-check test suites
 - README codex notes (trust, approval preconditions, scope, key injection), claude native-approvals note; AGENTS stack bullet; ROADMAP Phase 6 item
 - grok approval-seam spike: seam confirmed on grok 1.0.41 — Claude-compatible `PreToolUse` hooks with `allow|deny|ask|defer` decisions in `~/.grok/hooks/*.json` (always-trusted global scope); adapter est. ~3–4h
@@ -43,6 +45,7 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 - Release automation (VERSION-triggered release workflow, release-smoke CI) and the shipped roadmap ledger
 - First tagged release (earlier milestones: v1.1 stable, v1.2 core — shipped untagged in 2026-06)
 
-[Unreleased]: https://github.com/tsyche/hookline/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/tsyche/hookline/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/tsyche/hookline/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tsyche/hookline/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tsyche/hookline/releases/tag/v1.3.0
