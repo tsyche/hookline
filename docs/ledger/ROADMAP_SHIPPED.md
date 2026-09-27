@@ -14,6 +14,8 @@ live only in untracked config (`~/.config/hookline/config`).
 | Phase 5 | 2026-09-26 | reliability: `hookline doctor`, heartbeat + launchd watchdog, daemon unit tests |
 | Release smoke | 2026-09-26 | assert latest GitHub release tag == `VERSION`, gated in CI right after every release |
 | Phase 5b | 2026-09-26 | install/uninstall sandbox tests, heartbeat ages in `status`, log rotation + quiet SSE, smoke target-commit check |
+| v1.4.0 | 2026-09-26 | tagged release covering the Phase 5 / 5b rows above (doctor, watchdog, tests, roadmap phase rework) |
+| CHANGELOG | 2026-09-27 | Keep-a-Changelog file created, backfilled from v1.3.0 / v1.4.0 tags, `[Unreleased]` for pending work |
 
 ## v1.1 — Stable (archived)
 
@@ -116,3 +118,9 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
    - Extend `scripts/release-smoke.sh` to assert the release's `targetCommitish`
      equals the checked-out main HEAD — tag==VERSION alone misses a release
      tagging the wrong commit
+
+## Phase 6 item — CHANGELOG.md (shipped 2026-09-27)
+
+6. **CHANGELOG.md** (~1h)
+   - Releases now publish generated notes automatically; a tracked CHANGELOG aggregates them per version so the repo shows release history without opening GitHub
+   - Pulled forward from the old Future list now that release automation exists

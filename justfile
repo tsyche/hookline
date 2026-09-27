@@ -74,6 +74,10 @@ release-smoke:
 release-smoke-test:
     bash scripts/release-smoke-test.sh
 
+# Promote CHANGELOG [Unreleased] → current VERSION entry (run before bumping VERSION)
+changelog-promote:
+    bash scripts/changelog-promote.sh
+
 # Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
 sync-docs:
     @if [ AGENTS.md -nt CLAUDE.md ]; then cp AGENTS.md CLAUDE.md && echo "synced AGENTS.md -> CLAUDE.md"; \

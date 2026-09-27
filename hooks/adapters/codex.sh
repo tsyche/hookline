@@ -15,7 +15,7 @@
 
 # shellcheck disable=SC2034  # consumed by install.sh and core.sh
 
-ADAPTER_MATCHER="Bash|apply_patch"
+ADAPTER_MATCHER="Bash|apply_patch|mcp__.*"
 ADAPTER_RESPONSE_ONLY=1  # daemon's tmux keys are claude-specific — response file only
 HOOKLINE_WAITING_AGENT="Codex"
 

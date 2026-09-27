@@ -9,7 +9,7 @@ When an agent needs permission to run a tool, the terminal prompt appears instan
 ## How It Works
 
 ```
-Agent fires hook (PreToolUse) or plugin event
+Agent fires hook (PreToolUse / PermissionRequest) or plugin event
   → Terminal prompt appears immediately
   → 20-second grace period starts
     ├── Answered at terminal? → phone stays quiet
@@ -86,13 +86,15 @@ HOOKLINE_PROVIDERS="claude codex opencode"   # unset = all installed providers e
 
 A provider not listed exits its hook silently — that agent behaves as if hookline were absent. Each provider registers its own entry point at install time (`settings.json` hook for Claude-style agents, `hooks.json` merge for Codex, plugin file for OpenCode); the entry calls `hooks/hookline.sh <provider>`, which gates on the registry before running the shared flow.
 
+**On Claude Code:** native remote/mobile approvals already cover claude end-to-end — hookline still registers and works for claude (and Claude-style profiles), but is optional there. Its main job is bringing the same phone-approval UX to the other providers.
+
 ### Codex
 
 Codex support rides codex's own `PermissionRequest` hook — merged into `~/.codex/hooks.json` at install (existing hooks in the file are preserved, codex config untouched). Four things to know:
 
 1. **Trust it once.** Open codex, run `/hooks`, and review the hookline entry. Codex silently skips untrusted hooks until you do; `hookline doctor` and `hookline status` both report registered/trusted state.
 2. **An approval must actually fire.** hookline only sees requests codex chooses to ask about — that depends on your codex `approval_policy` and sandbox settings. If codex auto-approves or auto-denies by itself, no prompt reaches the hook and no phone notification is sent.
-3. **Scope is `Bash` + `apply_patch`.** MCP tool approvals are not wired up yet.
+3. **Scope is `Bash`, `apply_patch`, and MCP tools (`mcp__*`).** MCP approvals go through the same decline → menu → phone-answer flow.
 4. **The hook declines first, then injects keys.** An empty decision hands the request back to codex's own approval menu (so the terminal looks completely normal); when the phone answers, the watcher sends Enter (approve) or Esc (cancel) into the tmux pane that owns the prompt — or the frontmost window outside tmux.
 
 ### Adding an adapter
@@ -168,9 +170,9 @@ tail -f ~/.local/share/hookline/watchdog.log   # watchdog restarts
 bash uninstall.sh
 ```
 
-Removes the hook from Claude settings, the OpenCode plugin, the daemon and
-watchdog launchd jobs, the CLI, and installed files. Optionally removes config
-and logs.
+Removes the hook from Claude settings, the Codex `PermissionRequest` entry, the
+OpenCode plugin, the daemon and watchdog launchd jobs, the CLI, and installed
+files. Optionally removes config and logs.
 
 ## Terminal support
 

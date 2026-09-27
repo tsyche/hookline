@@ -159,7 +159,7 @@ contains "registered-blackbox" "$(hookline_count "$SETTINGS_BB")" "1"
 contains "other-hook-kept" "$(other_hook_count "$SETTINGS")" "1"
 contains "registered-codex" "$(codex_count "$CODEX_HOOKS")" "1"
 contains "codex-foreign-hook-kept" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
-contains "codex-matcher-set" "$(jq -r '.hooks.PermissionRequest[0].matcher' "$CODEX_HOOKS")" "Bash|apply_patch"
+contains "codex-matcher-set" "$(jq -r '.hooks.PermissionRequest[0].matcher' "$CODEX_HOOKS")" "Bash|apply_patch|mcp__.*"
 contains "install-mentions-codex-trust" "$out" "codex (/hooks)"
 
 # ── 2. reinstall is idempotent: one registration, topic unchanged ──

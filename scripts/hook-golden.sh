@@ -179,11 +179,14 @@ fi
 #    safe prefixes are the one foreground allow. Both logged, not just stdout ──
 CX_ALLOW='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
 CX_ASK='{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"},"cwd":"/tmp","session_id":"golden-cx","transcript_path":"/dev/null","permission_mode":"default"}'
+CX_MCP='{"tool_name":"mcp__github__create_issue","tool_input":{"server":"github","tool":"create_issue"},"cwd":"/tmp","session_id":"golden-cx","transcript_path":"/dev/null"}'
 CX_SAFE='{"tool_name":"Bash","tool_input":{"command":"echo hi"},"cwd":"/tmp","session_id":"golden-cx","transcript_path":"/dev/null"}'
 
 run_case "codex-no-config" codex "config not found" '{}' noconfig
 
 run_case_log "codex-bash-ask" codex "OUTPUT: decline (PermissionRequest" has "$CX_ASK"
+
+run_case_log "codex-mcp-ask" codex "OUTPUT: decline (PermissionRequest" has "$CX_MCP"
 
 run_case "codex-safe-prefix" codex "$CX_ALLOW" "$CX_SAFE"
 

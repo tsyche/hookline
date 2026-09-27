@@ -210,7 +210,11 @@ core_main() {
     # — Daemon path —
     if daemon_alive; then
       log "background: daemon available, handing off notification"
-      RESPONSE_FILE="/tmp/hookline-resp-${REQ_ID}"
+      # Response files carry approval decisions — non-guessable name (mktemp,
+      # 0600) in the user's private TMPDIR so no other local process can plant
+      # an "allow". Fallback keeps pid+random for the rare mktemp failure.
+      RESPONSE_FILE=$(mktemp "${TMPDIR:-/tmp}/hookline-resp.XXXXXX" 2>/dev/null) \
+        || RESPONSE_FILE="${TMPDIR:-/tmp}/hookline-resp.$$.$RANDOM"
       trap 'rm -f "$RESPONSE_FILE"; [[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$BASHPID" ]] && rm -f "$LOCK_FILE"' EXIT
 
       retries=0

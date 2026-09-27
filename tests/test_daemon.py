@@ -166,6 +166,7 @@ class TestResponseRouting(unittest.TestCase):
         run.assert_not_called()
         with open(rf) as f:
             self.assertEqual(f.read(), "allow")
+        self.assertEqual(os.stat(rf).st_mode & 0o777, 0o600)
         self.assertNotIn("r1", self.d.pending)
 
     def test_retry_writes_retry_and_clears_pending(self):
