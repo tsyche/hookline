@@ -18,6 +18,15 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   answers the native prompt through a unix-socket bridge (opencode's serverUrl does not accept
   plain TCP; only the in-process SDK client can reply). Appends a local-answer line on
   `permission.replied` for the away-detection signal.
+- **codex adapter** (`hooks/adapters/codex.sh`) — Bash. Interim Flow A hack over codex's
+  `PermissionRequest` event: empty stdout declines, so codex's own approval menu shows; the
+  background watcher injects Enter (approve, option 1 preselected) / Esc (cancel) — into the
+  hook's own `$TMUX_PANE` via `tmux send-keys` when inside tmux (pane-exact, works detached;
+  same pattern as claude's tmux path, watcher-side because the daemon's keys are
+  claude-hardcoded), frontmost-app osascript otherwise (claude's bare-terminal path).
+  Response-only (`ADAPTER_RESPONSE_ONLY=1`); local-answer signal = session rollout JSONL
+  growth. Registered by merging `~/.codex/hooks.json` (foreign hooks preserved; one-time
+  `/hooks` trust review).
 - **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only), managed by launchd
   (`daemon/com.hookline.daemon.plist`). Listens on a Unix socket
   (`~/.local/share/hookline/daemon.sock`) for messages from hook invocations; holds a
@@ -77,4 +86,5 @@ just uninstall      # remove everything
 - Hook registration: `~/.claude/settings.json` (provider `claude`) and
   `~/.claude-bb/settings.json` (the local custom claude-profile provider); each registration
   is an inverse pair with install/uninstall. opencode registers differently — plugin file
-  copied to `~/.config/opencode/plugins/hookline.js` (no settings-JSON entry)
+  copied to `~/.config/opencode/plugins/hookline.js` (no settings-JSON entry); codex likewise —
+  `PermissionRequest` entry merged into `~/.codex/hooks.json` (no config.toml edits)

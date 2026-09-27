@@ -32,9 +32,10 @@ PLUGIN_DST="$H/.config/opencode/plugins/hookline.js"
 DAEMON_PLIST="$H/Library/LaunchAgents/com.hookline.daemon.plist"
 WATCHDOG_PLIST="$H/Library/LaunchAgents/com.hookline.watchdog.plist"
 CONFIG="$H/.config/hookline/config"
+CODEX_HOOKS="$H/.codex/hooks.json"
 
 mkdir -p "$H/.claude" "$H/.claude-bb" "$H/.config/opencode" "$H/.config/hookline" \
-         "$H/Library/LaunchAgents"
+         "$H/Library/LaunchAgents" "$H/.codex"
 
 seed_settings() { # seed_settings <path>
   cat > "$1" <<'EOF'
@@ -55,6 +56,27 @@ seed_settings "$SETTINGS"
 seed_settings "$SETTINGS_BB"
 seed_a="$(jq -S . "$SETTINGS")"
 seed_b="$(jq -S . "$SETTINGS_BB")"
+
+# Seed codex's own hooks file in jq's exact output format — the install/
+# uninstall merge must preserve the foreign hook and restore the file (a
+# round-trip against a hand-formatted file would only test jq's formatting).
+cat > "$CODEX_HOOKS" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/bin/foreign-hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+seed_cx="$(jq -S . "$CODEX_HOOKS")"
 
 # Pre-written config keeps install non-interactive (topic must survive).
 printf '%s\n' 'HOOKLINE_TOPIC="install-test-topic"' > "$CONFIG"
@@ -101,6 +123,14 @@ other_hook_count() { # <settings> -> number of /opt/bin/other-hook commands
   jq '[.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("other-hook"))] | length' "$1"
 }
 
+codex_count() { # <hooks.json> -> number of hookline PermissionRequest commands
+  jq '[.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$1"
+}
+
+codex_foreign_count() { # <hooks.json> -> foreign SessionStart hooks that must survive
+  jq '[.hooks.SessionStart[]?.hooks[]? | select((.command // "") | contains("foreign-hook"))] | length' "$1"
+}
+
 run_install() {
   env HOME="$H" HOOKLINE_SANDBOX=1 bash "$REPO/install.sh" 2>&1
 }
@@ -127,6 +157,10 @@ absent "plist-no-placeholder" "$(cat "$DAEMON_PLIST")" "HOOKLINE_DAEMON_PATH"
 contains "registered-claude" "$(hookline_count "$SETTINGS")" "1"
 contains "registered-blackbox" "$(hookline_count "$SETTINGS_BB")" "1"
 contains "other-hook-kept" "$(other_hook_count "$SETTINGS")" "1"
+contains "registered-codex" "$(codex_count "$CODEX_HOOKS")" "1"
+contains "codex-foreign-hook-kept" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
+contains "codex-matcher-set" "$(jq -r '.hooks.PermissionRequest[0].matcher' "$CODEX_HOOKS")" "Bash|apply_patch"
+contains "install-mentions-codex-trust" "$out" "codex (/hooks)"
 
 # ── 2. reinstall is idempotent: one registration, topic unchanged ──
 out="$(run_install)"
@@ -134,6 +168,7 @@ rc=$?
 expect_rc "reinstall" "$rc"
 contains "reinstall-already-registered" "$out" "already registered"
 contains "reinstall-single-registration" "$(hookline_count "$SETTINGS")" "1"
+contains "reinstall-single-codex-registration" "$(codex_count "$CODEX_HOOKS")" "1"
 contains "reinstall-topic-unchanged" "$(cat "$CONFIG")" 'HOOKLINE_TOPIC="install-test-topic"'
 
 # ── 3. uninstall (keep config): exact inverse, other hooks untouched ──
@@ -148,6 +183,9 @@ not_exists "watchdog-py-removed" "$H/.local/share/hookline/watchdog.py"
 not_exists "plugin-removed" "$PLUGIN_DST"
 contains "claude-registration-removed" "$(hookline_count "$SETTINGS")" "0"
 contains "blackbox-registration-removed" "$(hookline_count "$SETTINGS_BB")" "0"
+contains "codex-registration-removed" "$(codex_count "$CODEX_HOOKS")" "0"
+contains "codex-foreign-hook-survives" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
+expect_eq "hooks-json-roundtrip-codex" "$seed_cx" "$(jq -S . "$CODEX_HOOKS")"
 expect_eq "settings-json-roundtrip-claude" "$seed_a" "$(jq -S . "$SETTINGS")"
 expect_eq "settings-json-roundtrip-blackbox" "$seed_b" "$(jq -S . "$SETTINGS_BB")"
 exists "config-kept-on-n" "$CONFIG"
@@ -155,6 +193,7 @@ exists "config-kept-on-n" "$CONFIG"
 # ── 4. re-install after uninstall registers again (invert is re-runnable) ──
 out="$(run_install)"
 contains "re-register-after-uninstall" "$(hookline_count "$SETTINGS")" "1"
+contains "re-register-codex-after-uninstall" "$(codex_count "$CODEX_HOOKS")" "1"
 
 # ── 5. uninstall (remove config): everything goes ──
 out="$(run_uninstall y)"

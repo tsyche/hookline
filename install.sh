@@ -195,6 +195,33 @@ if [ -f "$SETTINGS_BB" ]; then
   register_provider "$SETTINGS_BB" "blackbox"
 fi
 
+# codex: merge a PermissionRequest entry into ~/.codex/hooks.json — codex has
+# no settings-JSON surface, and this file is separate from config.toml, so the
+# user's codex config is never touched. Skipped when codex itself isn't present.
+# The hook still no-ops until `codex` is added to HOOKLINE_PROVIDERS. Merging
+# preserves any hooks already in the file; a fresh file starts from {"hooks":{}}.
+CODEX_DIR="${HOME}/.codex"
+CODEX_HOOKS="${CODEX_DIR}/hooks.json"
+if [ -d "$CODEX_DIR" ]; then
+  # shellcheck source=/dev/null
+  source "${HOOK_SRC_DIR}/adapters/codex.sh"   # for ADAPTER_MATCHER (codex registration is last)
+  if [ ! -s "$CODEX_HOOKS" ]; then
+    printf '%s\n' '{"hooks":{}}' > "$CODEX_HOOKS"
+  fi
+  hook_cmd="[ -x \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"\$HOME/.local/share/hookline/hooks/hookline.sh\" codex || true"
+  if jq -e --arg cmd "$hook_cmd" '.hooks.PermissionRequest[]?.hooks[]? | select(.command? == $cmd)' "$CODEX_HOOKS" &>/dev/null; then
+    echo "Hook already registered in $CODEX_HOOKS (provider: codex)"
+  else
+    jq --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
+      .hooks //= {} |
+      .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) +
+        [{matcher: $matcher, hooks: [{type: "command", command: $cmd, timeout: 30}]}])
+    ' "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
+    echo "Hook registered in $CODEX_HOOKS (provider: codex)"
+    echo "Review it once inside codex (/hooks) — codex skips untrusted hooks until then."
+  fi
+fi
+
 echo
 echo "=== Installation complete ==="
 echo "Subscribe to topic '${HOOKLINE_TOPIC}' in the ntfy app on your phone."

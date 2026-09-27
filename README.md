@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/tsyche/hookline/actions/workflows/ci.yml/badge.svg)](https://github.com/tsyche/hookline/actions/workflows/ci.yml)
 
-**tl;dr:** Approve permission prompts from your phone via [ntfy.sh](https://ntfy.sh) — works with Claude Code, OpenCode, and any hook-compatible AI coding agent on macOS. A 20-second grace period keeps your phone quiet when you're at the terminal.
+**tl;dr:** Approve permission prompts from your phone via [ntfy.sh](https://ntfy.sh) — works with Claude Code, Codex, OpenCode, and any hook-compatible AI coding agent on macOS. A 20-second grace period keeps your phone quiet when you're at the terminal.
 
 When an agent needs permission to run a tool, the terminal prompt appears instantly. If you answer at the terminal, your phone is never notified. If you walk away, a push notification arrives on your phone after the grace period — tap to respond, and the prompt auto-dismisses.
 
@@ -18,7 +18,7 @@ Agent fires hook (PreToolUse) or plugin event
             → Adapter resolves the prompt (keystroke injection or reply API)
 ```
 
-Each provider plugs into a provider-neutral core through an adapter: Claude Code via its [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PreToolUse` event), OpenCode via an auto-loaded plugin, others the same way. A background daemon maintains a persistent SSE connection to ntfy so phone responses arrive instantly.
+Each provider plugs into a provider-neutral core through an adapter: Claude Code via its [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PreToolUse` event), Codex via its [hooks system](https://developers.openai.com/codex/hooks) (`PermissionRequest` event), OpenCode via an auto-loaded plugin, others the same way. A background daemon maintains a persistent SSE connection to ntfy so phone responses arrive instantly.
 
 ## Requirements
 
@@ -49,6 +49,7 @@ The installer will:
    restarts a hung daemon — `KeepAlive` only catches processes that exit)
 7. Register the hook in `~/.claude/settings.json` (plus a second Claude-profile settings file when one is present on the machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
+9. Merge the Codex `PermissionRequest` hook into `~/.codex/hooks.json`, when `~/.codex` exists (existing hooks in the file are preserved; review the new hook once inside codex via `/hooks` — codex skips untrusted hooks)
 
 Then open the ntfy app and subscribe to your topic (and `your-topic-response`).
 
@@ -80,16 +81,25 @@ To permanently allow a tool/command, answer **Yes** at the terminal prompt and s
 `HOOKLINE_PROVIDERS` in config is the whitelist of providers whose hook entries fire:
 
 ```bash
-HOOKLINE_PROVIDERS="claude opencode"   # unset = all installed providers enabled
+HOOKLINE_PROVIDERS="claude codex opencode"   # unset = all installed providers enabled
 ```
 
-A provider not listed exits its hook silently — that agent behaves as if hookline were absent. Each provider registers its own entry point at install time (`settings.json` hook for Claude-style agents, plugin file for OpenCode); the entry calls `hooks/hookline.sh <provider>`, which gates on the registry before running the shared flow.
+A provider not listed exits its hook silently — that agent behaves as if hookline were absent. Each provider registers its own entry point at install time (`settings.json` hook for Claude-style agents, `hooks.json` merge for Codex, plugin file for OpenCode); the entry calls `hooks/hookline.sh <provider>`, which gates on the registry before running the shared flow.
+
+### Codex
+
+Codex support rides codex's own `PermissionRequest` hook — merged into `~/.codex/hooks.json` at install (existing hooks in the file are preserved, codex config untouched). Four things to know:
+
+1. **Trust it once.** Open codex, run `/hooks`, and review the hookline entry. Codex silently skips untrusted hooks until you do; `hookline doctor` and `hookline status` both report registered/trusted state.
+2. **An approval must actually fire.** hookline only sees requests codex chooses to ask about — that depends on your codex `approval_policy` and sandbox settings. If codex auto-approves or auto-denies by itself, no prompt reaches the hook and no phone notification is sent.
+3. **Scope is `Bash` + `apply_patch`.** MCP tool approvals are not wired up yet.
+4. **The hook declines first, then injects keys.** An empty decision hands the request back to codex's own approval menu (so the terminal looks completely normal); when the phone answers, the watcher sends Enter (approve) or Esc (cancel) into the tmux pane that owns the prompt — or the frontmost window outside tmux.
 
 ### Adding an adapter
 
 1. Create `hooks/adapters/<provider>.sh` implementing the adapter interface documented at the top of `hooks/core.sh`: normalize stdin JSON, extract the Bash command, parse an allowlist source, emit the provider's decision JSON, build the notification body, expose a local-progress counter, and inject/resolve allow|deny.
 2. Register the provider's entry point (settings hook, plugin, etc.) to invoke `hookline.sh <provider>` with the raw payload.
-3. Set `ADAPTER_RESPONSE_ONLY=1` if your provider answers decisions itself (reply API) instead of the daemon injecting keystrokes.
+3. Set `ADAPTER_RESPONSE_ONLY=1` when the daemon must not inject tmux keys for this provider — either the provider resolves decisions itself (reply API) or its prompt needs a different key profile than the daemon's built-in claude keys (codex: Enter/Esc from the hook-side watcher instead).
 4. Add golden cases in `scripts/hook-golden.sh`, then run `just lint && just golden`.
 
 ## Configuration
@@ -172,6 +182,7 @@ and logs.
 | WezTerm | AppleScript | Requires Accessibility permission for WezTerm |
 | Other | AppleScript (frontmost) | Targets whichever app is in focus |
 | OpenCode TUI | Reply API (no injection) | The plugin answers the prompt in-process; no terminal focus or Accessibility needed |
+| Codex TUI | `tmux send-keys` (own pane) / AppleScript | `PermissionRequest` declines → codex's own approval menu shows; phone answer injects Enter (approve) / Esc (cancel) into the pane that owns the prompt |
 
 For the AppleScript terminals, keystroke injection is performed by the hook process (a child of your terminal), so macOS Accessibility permission is only needed for the terminal app itself — never for a background process. tmux injection uses `tmux send-keys` (run by the daemon) and needs no Accessibility permission at all.
 
@@ -191,7 +202,7 @@ See [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control) for au
 - **SSE-based daemon** — persistent connection for instant response; no polling delay
 - **Retry button** — instant resend without re-waiting the grace period
 - **Fallback mode** — works without the daemon via inline polling
-- **Multi-provider registry** — Claude, OpenCode, and adapter-shaped future agents behind one core
+- **Multi-provider registry** — Claude, Codex, OpenCode, and adapter-shaped future agents behind one core
 
 ## License
 

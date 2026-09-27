@@ -61,6 +61,19 @@ if [ -f "$OPC_PLUGIN" ]; then
   echo "Removed $OPC_PLUGIN"
 fi
 
+# Remove the codex registration (inverse of install.sh's merge — only the
+# hookline PermissionRequest entries; every other hook in the file survives).
+CODEX_HOOKS="${HOME}/.codex/hooks.json"
+if [ -f "$CODEX_HOOKS" ] && \
+   jq -e '.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$CODEX_HOOKS" &>/dev/null; then
+  jq '.hooks //= {} |
+      .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) |
+        map(select([.hooks[]?.command // ""] | any(contains("hookline")) | not))) |
+      if (.hooks.PermissionRequest | length) == 0 then del(.hooks.PermissionRequest) else . end' \
+    "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
+  echo "Hook removed from $CODEX_HOOKS"
+fi
+
 # Optionally remove config
 echo -n "Remove config and logs at ~/.config/hookline and ~/.local/share/hookline? [y/N] "
 read -r confirm

@@ -174,6 +174,41 @@ else
   echo "SKIP opencode gate cases (entry has no HOOKLINE_PROVIDERS gate yet)"
 fi
 
+# ── codex adapter cases: PermissionRequest contract — the initial decision is
+#    an empty stdout (decline → codex's native approval menu owns the UI);
+#    safe prefixes are the one foreground allow. Both logged, not just stdout ──
+CX_ALLOW='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+CX_ASK='{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"},"cwd":"/tmp","session_id":"golden-cx","transcript_path":"/dev/null","permission_mode":"default"}'
+CX_SAFE='{"tool_name":"Bash","tool_input":{"command":"echo hi"},"cwd":"/tmp","session_id":"golden-cx","transcript_path":"/dev/null"}'
+
+run_case "codex-no-config" codex "config not found" '{}' noconfig
+
+run_case_log "codex-bash-ask" codex "OUTPUT: decline (PermissionRequest" has "$CX_ASK"
+
+run_case "codex-safe-prefix" codex "$CX_ALLOW" "$CX_SAFE"
+
+run_case_log "codex-disabled-flag" codex "=== PreToolUse hook fired ===" hasnt "$CX_ASK" disabled
+
+if grep -q "HOOKLINE_PROVIDERS" "$HOOK"; then
+  run_case_log "codex-gate-excluded" codex "=== PreToolUse hook fired ===" hasnt "$CX_ASK" "providers:claude"
+
+  run_case_log "codex-gate-included" codex "=== PreToolUse hook fired ===" has "$CX_ASK" "providers:claude codex"
+else
+  echo "SKIP codex gate cases (entry has no HOOKLINE_PROVIDERS gate yet)"
+fi
+
+# ── codex progress counter: raw rollout line count (no claude-style filtering
+#    — the rollout only grows when the turn resolves) ──
+CX_FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+CX_TRANSCRIPT="$CX_FIXTURE_DIR/rollout.jsonl"
+printf '%s\n' '{"type":"event_msg"}' '{"type":"response_item"}' '{"type":"event_msg"}' > "$CX_TRANSCRIPT"
+CX_PATCH=$(jq -nc --arg tp "$CX_TRANSCRIPT" \
+  '{tool_name:"apply_patch",tool_input:{command:"*** Begin Patch\n*** Update File: /tmp/x"},cwd:"/tmp",session_id:"golden-cx2",transcript_path:$tp}')
+
+run_case_log "codex-progress-raw-rollout" codex \
+  "baseline transcript lines: 3" has "$CX_PATCH" "" ""
+rm -rf "$CX_FIXTURE_DIR"
+
 # ── claude progress counter: transcript metadata lines are not local answers ──
 FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
 CLAUDE_TRANSCRIPT="$FIXTURE_DIR/transcript.jsonl"

@@ -11,7 +11,7 @@
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
 > **claude only**. The revival: the same phone-approval UX for every agent the `ai` alias can
-> launch (claude · codex · grok · opencode · local custom providers) via a provider registry +
+> launch (claude · codex · opencode · local custom providers) via a provider registry +
 > adapter architecture. See the archived [multi-provider plan](~/.claude/plans/archive/hookline-multi-provider.md)
 > for decisions, phases, and gates. Shipped phases are archived in the
 > [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
@@ -91,6 +91,25 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 6. **CHANGELOG.md** (~1h)
    - Releases now publish generated notes automatically; a tracked CHANGELOG aggregates them per version so the repo shows release history without opening GitHub
    - Pulled forward from the old Future list now that release automation exists
+
+7. **codex adapter (interim hack)** — implemented + live-E2E'd 2026-09-27, pending commit/release
+   - Flow A over codex's `PermissionRequest` hook: empty stdout declines → codex's own approval
+     menu shows; phone answer arrives as keystrokes (Enter approves — option 1 preselected,
+     Esc cancels; both verified against codex 0.157.1 in tmux)
+   - Injection follows the claude pattern: watcher injects into its own `$TMUX_PANE` via
+     `tmux send-keys` inside tmux (pane-exact, works detached — daemon keys stay
+     claude-hardcoded, hence response-only `ADAPTER_RESPONSE_ONLY=1`), frontmost-app
+     osascript on bare terminals (claude's non-tmux path)
+   - Rollout JSONL growth = local-answer signal (raw count — the rollout doesn't grow while
+     the menu sits open)
+   - Registration merges a `PermissionRequest` entry into `~/.codex/hooks.json` (foreign hooks
+     preserved, exact inverse on uninstall, round-trip tested); off until `codex` joins
+     `HOOKLINE_PROVIDERS`; one-time `/hooks` trust review (doctor reports registered + trusted)
+   - Live E2E proven with real ntfy taps: allow → file created, deny → menu canceled,
+     retry → `-r1` resend → approve, stale/cancelled req ignored
+   - Interim by design: rip out when codex ships a real remote-approval integration; safe
+     prefixes emit a foreground `allow` so read-only commands skip the menu entirely
+   - Tests: 6 new golden cases (24 total) + install round-trip asserts (45); all 8 gates green
 
 ## Phase 7 — Remote control + E2E
 

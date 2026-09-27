@@ -249,6 +249,22 @@ cmd_status() {
   fi
   echo
 
+  CODEX_HOOKS="${HOME}/.codex/hooks.json"
+  if [ -d "${HOME}/.codex" ]; then
+    echo "── codex hook ($CODEX_HOOKS)"
+    if [ -f "$CODEX_HOOKS" ] && jq -e '.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$CODEX_HOOKS" &>/dev/null; then
+      echo "  registered ✓"
+      if grep -qF "[hooks.state.\"${CODEX_HOOKS}:permission_request:0:0\"]" "${HOME}/.codex/config.toml" 2>/dev/null; then
+        echo "  trusted ✓"
+      else
+        echo "  NOT trusted — review inside codex (/hooks); codex skips untrusted hooks"
+      fi
+    else
+      echo "  NOT registered — run install.sh to register"
+    fi
+    echo
+  fi
+
   echo "── Hook file ($HOOK_DST)"
   if [ -f "$HOOK_DST" ]; then
     echo "  installed ✓  ($(wc -l < "$HOOK_DST" | tr -d ' ') lines)"
@@ -386,6 +402,19 @@ cmd_doctor() {
       doc_ok "OpenCode plugin installed"
     else
       doc_fail "OpenCode plugin missing — run: bash install.sh"
+    fi
+  fi
+  CODEX_HOOKS="${HOME}/.codex/hooks.json"
+  if [ -d "${HOME}/.codex" ]; then
+    if [ -f "$CODEX_HOOKS" ] && jq -e '.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$CODEX_HOOKS" &>/dev/null; then
+      doc_ok "codex hook registered"
+      if grep -qF "[hooks.state.\"${CODEX_HOOKS}:permission_request:0:0\"]" "${HOME}/.codex/config.toml" 2>/dev/null; then
+        doc_ok "codex hook trusted"
+      else
+        doc_fail "codex hook NOT trusted — review it inside codex (/hooks), then re-run doctor"
+      fi
+    else
+      doc_fail "codex hook NOT registered — run: bash install.sh"
     fi
   fi
   echo
