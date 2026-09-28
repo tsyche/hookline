@@ -11,13 +11,27 @@
 //   permission.replied → append a line to the per-session counter file; the
 //                        hook's progress signal sees growth and tears down
 //                        its background flow (local or programmatic answer).
+//   question.asked / question.v2.asked  → same spawn; stdin carries the
+//                        question payload (questions[] + options instead of a
+//                        permission). The native question dialog is showing.
+//   question.replied / question.rejected (+ .v2) → same counter-file append:
+//                        answering or dismissing the dialog at the terminal
+//                        cancels the hook's grace/notification flow.
 //
 // Decisions travel the other way over a unix socket: the opencode SDK client
 // reached from this plugin is the only party that can actually answer a
 // prompt — its transport does not resolve serverUrl over TCP (plain curl to
-// the same URL gets ECONNREFUSED). The plugin listens on
-// $HOOKLINE_OPC_REPLY_SOCK and POSTs {response: once|always|reject} via
-// client.postSessionIdPermissionsPermissionId.
+// the same URL gets ECONNREFUSED; the client dispatches through an in-process
+// fetch when opencode runs without an HTTP listener). The plugin listens on
+// $HOOKLINE_OPC_REPLY_SOCK and POSTs:
+//   {response, session_id, permission_id}   → client.postSessionIdPermissionsPermissionId
+//   {type:"question", request_id, answers}  → question.reply (answers wrapped per-question)
+//   {type:"question-reject", request_id}    → question.reject
+//
+// The injected client is the v1 SDK surface (no `question` API), so question
+// calls go through a lazily built v2 client that reuses the injected client's
+// own transport (getConfig(): fetch/baseUrl/headers) — a fresh client with
+// default fetch would try plain TCP and get ECONNREFUSED.
 //
 // Child env: HOOKLINE_OPC_REPLY_SOCK (this socket), HOOKLINE_OPC_SERVER
 // (informational serverUrl), HOOKLINE_OPC_CWD (project directory — the
@@ -67,13 +81,36 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
     sock.on("end", async () => {
       try {
         const msg = JSON.parse(buf);
-        const r = await client.postSessionIdPermissionsPermissionId({
-          path: { id: msg.session_id, permissionID: msg.permission_id },
-          body: { response: msg.response },
-        });
-        logLine(
-          `replied ${msg.response} (${msg.permission_id}) → ${JSON.stringify(r.data)}`,
-        );
+        if (msg.type === "question") {
+          // v2 transport: injected client may carry `question` itself (future
+          // opencode); otherwise rebuild one over its getConfig() transport.
+          const qc = client.question?.reply ? client : await questionClient();
+          const r = await qc.question.reply({
+            requestID: msg.request_id,
+            directory,
+            answers: [msg.answers],
+          });
+          logLine(
+            `question replied ${JSON.stringify(msg.answers)} (${msg.request_id}) → ${JSON.stringify(r.data)}`,
+          );
+        } else if (msg.type === "question-reject") {
+          const qc = client.question?.reject ? client : await questionClient();
+          const r = await qc.question.reject({
+            requestID: msg.request_id,
+            directory,
+          });
+          logLine(
+            `question rejected (${msg.request_id}) → ${JSON.stringify(r.data)}`,
+          );
+        } else {
+          const r = await client.postSessionIdPermissionsPermissionId({
+            path: { id: msg.session_id, permissionID: msg.permission_id },
+            body: { response: msg.response },
+          });
+          logLine(
+            `replied ${msg.response} (${msg.permission_id}) → ${JSON.stringify(r.data)}`,
+          );
+        }
         sock.end("ok");
       } catch (e) {
         logLine(`reply failed: ${String(e).slice(0, 300)}`);
@@ -89,6 +126,37 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
   });
   logLine(`loaded serverUrl=${String(serverUrl)} sock=${REPLY_SOCK} cwd=${directory}`);
 
+  // v2 question client — reuses the injected client's transport (in-process
+  // fetch / baseUrl / headers) so replies reach the server without TCP.
+  let qClientP = null;
+  const questionClient = () => {
+    if (!qClientP) {
+      qClientP = (async () => {
+        const raw = client?._client;
+        const cfg = raw?.getConfig?.() ?? {};
+        const headers =
+          cfg.headers instanceof Headers
+            ? Object.fromEntries(cfg.headers.entries())
+            : cfg.headers;
+        const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
+        const qc = createOpencodeClient({
+          ...cfg,
+          headers,
+          baseUrl: cfg.baseUrl ?? String(serverUrl),
+          directory,
+        });
+        logLine(
+          `question client: v2 transport=${cfg.fetch ? "injected" : "serverUrl"}`,
+        );
+        return qc;
+      })().catch((e) => {
+        qClientP = null; // retry next time rather than caching the failure
+        throw e;
+      });
+    }
+    return qClientP;
+  };
+
   return {
     dispose: async () => {
       try {
@@ -97,7 +165,7 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
       } catch {}
     },
     event: async ({ event }) => {
-      if (event.type === "permission.asked") {
+      const spawnHook = (properties) => {
         try {
           const child = spawn(HOOK, ["opencode"], {
             env: {
@@ -108,23 +176,41 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
             },
             stdio: ["pipe", "ignore", logFd],
           });
-          child.stdin.write(JSON.stringify(event.properties));
+          child.stdin.write(JSON.stringify(properties));
           child.stdin.end();
           child.on("error", (err) => logLine(`spawn error: ${err}`));
         } catch (err) {
           logLine(`spawn threw: ${err}`);
         }
-      }
+      };
 
-      if (event.type === "permission.replied") {
+      const appendCounter = (sessionID) => {
         try {
           appendFileSync(
-            join(DATA_DIR, `opencode-answered-${event.properties.sessionID}`),
+            join(DATA_DIR, `opencode-answered-${sessionID}`),
             "\n",
           );
         } catch {
           // counter dir missing — progress signal degrades to "never grows"
         }
+      };
+
+      if (
+        event.type === "permission.asked" ||
+        event.type === "question.asked" ||
+        event.type === "question.v2.asked"
+      ) {
+        spawnHook(event.properties);
+      }
+
+      if (
+        event.type === "permission.replied" ||
+        event.type === "question.replied" ||
+        event.type === "question.rejected" ||
+        event.type === "question.v2.replied" ||
+        event.type === "question.v2.rejected"
+      ) {
+        appendCounter(event.properties.sessionID);
       }
     },
   };

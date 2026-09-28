@@ -106,8 +106,8 @@ class TestNotify(unittest.TestCase):
     def setUp(self):
         self.d = daemon_mod.Daemon()
         self.sent = []
-        self.d.send_ntfy = lambda config, title, message, req_id: \
-            self.sent.append((title, message, req_id)) or True
+        self.d.send_ntfy = lambda config, title, message, req_id, actions=None: \
+            self.sent.append((title, message, req_id, actions)) or True
 
     def test_notify_registers_pending_and_session(self):
         reply = exchange(self.d, {
@@ -125,6 +125,34 @@ class TestNotify(unittest.TestCase):
         exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r2"})
         self.assertNotIn("r1", self.d.pending)
         self.assertEqual(self.d.pending, {"r2": "s1"})
+
+    def test_notify_forwards_custom_actions(self):
+        actions = [{"label": "Alpha", "payload": "answer|Alpha"}]
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r1",
+                          "actions": actions})
+        self.assertEqual(self.sent[0][3], actions)
+
+    def test_notify_without_actions_passes_none(self):
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r1"})
+        self.assertIsNone(self.sent[0][3])
+
+    def test_notify_no_actions_passes_empty_list(self):
+        # notify-only question: explicit no_actions flag must suppress the
+        # default trio (actions:[0] alone cannot — permissions send that too)
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r1",
+                          "actions": [], "no_actions": True})
+        self.assertEqual(self.sent[0][3], [])
+
+    def test_notify_stores_question_options(self):
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r1",
+                          "options": ["Alpha", "Beta"]})
+        self.assertEqual(self.d.question_options["r1"], ["Alpha", "Beta"])
+
+    def test_notify_supersede_clears_options(self):
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r1",
+                          "options": ["Alpha"]})
+        exchange(self.d, {"type": "notify", "session_id": "s1", "req_id": "r2"})
+        self.assertNotIn("r1", self.d.question_options)
 
 
 class TestResponseRouting(unittest.TestCase):
@@ -177,11 +205,81 @@ class TestResponseRouting(unittest.TestCase):
             self.assertEqual(f.read(), "retry")
         self.assertNotIn("r1", self.d.pending)
 
+    def test_answer_writes_answer_label_and_clears_pending(self):
+        rf = os.path.join(HOME, "resp-answer")
+        self.register(response_file=rf)
+        with mock.patch.object(daemon_mod.subprocess, "run") as run:
+            self.d.handle_response("r1", "answer|Alpha")
+        run.assert_not_called()  # questions route via response file, never tmux
+        with open(rf) as f:
+            self.assertEqual(f.read(), "answer|Alpha")
+        self.assertEqual(os.stat(rf).st_mode & 0o777, 0o600)
+        self.assertNotIn("r1", self.d.pending)
+
+    def test_answer_via_tmux_sends_option_number(self):
+        self.register(tmux_pane="%1")
+        self.d.question_options["r1"] = ["Alpha", "Beta", "Gamma"]
+        with mock.patch.object(daemon_mod, "TMUX_BIN", "/usr/bin/tmux"), \
+             mock.patch.object(daemon_mod.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.d.handle_response("r1", "answer|Beta")
+        run.assert_called_once_with(
+            ["/usr/bin/tmux", "-S", "/tmp/t.sock", "send-keys", "-t", "%1", "2", "Enter"],
+            capture_output=True,
+        )
+        self.assertNotIn("r1", self.d.pending)
+        self.assertNotIn("r1", self.d.question_options)
+
     def test_unknown_req_id_is_ignored(self):
         with mock.patch.object(daemon_mod.subprocess, "run") as run:
             self.d.handle_response("nope", "allow")
         run.assert_not_called()
         self.assertEqual(self.d.pending, {})
+
+
+class TestSendNtfyActions(unittest.TestCase):
+    """ntfy payload buttons: default trio, or adapter-provided question options."""
+
+    def send(self, actions=None):
+        d = daemon_mod.Daemon()
+        captured = {}
+
+        def fake_urlopen(req, timeout=10):
+            captured["payload"] = json.loads(req.data)
+
+            class R:
+                def read(self):
+                    return json.dumps({"id": "nid"}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            return R()
+
+        with mock.patch.object(d, "_throttle"), \
+             mock.patch.object(daemon_mod.urllib.request, "urlopen", fake_urlopen):
+            ok = d.send_ntfy({"HOOKLINE_TOPIC": "tp"}, "t", "m", "req1", actions)
+        self.assertTrue(ok)
+        return captured["payload"]
+
+    def test_default_trio_when_actions_omitted(self):
+        acts = self.send()["actions"]
+        self.assertEqual([a["label"] for a in acts], ["Allow", "Deny", "Retry"])
+        self.assertEqual(acts[0]["body"], "allow|req1")
+
+    def test_custom_actions_carry_payload_and_req_id(self):
+        acts = self.send([{"label": "Alpha", "payload": "answer|Alpha"}])["actions"]
+        self.assertEqual(len(acts), 1)
+        self.assertEqual(acts[0]["label"], "Alpha")
+        self.assertEqual(acts[0]["body"], "answer|Alpha|req1")
+        self.assertEqual(acts[0]["method"], "POST")
+
+    def test_empty_actions_means_no_buttons(self):
+        acts = self.send([])["actions"]
+        self.assertEqual(acts, [])
 
 
 class TestHeartbeat(unittest.TestCase):
@@ -228,7 +326,11 @@ class TestHeartbeat(unittest.TestCase):
             d.start()
         self.assertGreaterEqual(daemon_mod.age(daemon_mod.HEARTBEAT_PATH), 0)
         self.assertGreaterEqual(daemon_mod.age(daemon_mod.SSE_HEARTBEAT_PATH), 0)
-        fake_threads.Thread.assert_called_once()
+        # two SSE listeners: response topic (buttons) + bare topic (typed replies)
+        calls = fake_threads.Thread.call_args_list
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[0].kwargs["args"], ("-response",))
+        self.assertEqual(calls[1].kwargs["args"], ("",))
 
 
 class FakeSseResponse:
@@ -298,6 +400,200 @@ class TestSseLogging(unittest.TestCase):
         self.assertEqual(len(lost), 1, warning)
         connected = [m for m in info if "SSE connected" in m]
         self.assertEqual(len(connected), 1, info)
+
+
+class TestSseAnswerRouting(unittest.TestCase):
+    """The response-topic body format answer|<label>|<req_id> parses back to
+    decision='answer|<label>' with a clean req_id — rsplit from the right."""
+
+    def test_answer_body_routes_with_label(self):
+        d = daemon_mod.Daemon()
+        handled = []
+
+        class LineSse(FakeSseResponse):
+            def __iter__(self):
+                return iter([json.dumps(
+                    {"message": "answer|Alpha|r1"}).encode()])
+
+        class SyncThread:
+            def __init__(self, target=None, args=(), daemon=False, **kw):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        with mock.patch.object(d, "handle_response",
+                               side_effect=lambda r, dec: handled.append((r, dec))), \
+             mock.patch.object(daemon_mod.threading, "Thread", SyncThread):
+            drive_sse(d, [LineSse()], stop_after=1)
+        self.assertEqual(handled, [("r1", "answer|Alpha")])
+
+
+class TestTypedReply(unittest.TestCase):
+    """Bare replies from the ntfy app: option number/letter, retry/allow/deny
+    words, and invalid-reply feedback. Ambiguous replies are dropped."""
+
+    def setUp(self):
+        self.d = daemon_mod.Daemon()
+        self.handled = []
+        self.sent = []   # (title, message, req_id, actions) via send_ntfy
+        patcher = mock.patch.object(
+            self.d, "send_ntfy",
+            side_effect=lambda cfg, t, m, r, actions=None: (
+                self.sent.append((t, m, r, actions)), True)[1],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def arm(self, req="r1", session="s1",
+            options=("One", "Two", "Three", "Four")):
+        self.d.sessions[session] = {"response_file": "/tmp/r",
+                                    "notify_title": "[label] question"}
+        self.d.pending[req] = session
+        self.d.question_options[req] = list(options)
+        return mock.patch.object(
+            self.d, "handle_response",
+            side_effect=lambda r, dec: self.handled.append((r, dec)),
+        )
+
+    def test_numeric_reply_maps_to_label(self):
+        with self.arm():
+            self.d.handle_typed_reply("4")
+        self.assertEqual(self.handled, [("r1", "answer|Four")])
+
+    def test_letter_reply_case_insensitive(self):
+        with self.arm():
+            self.d.handle_typed_reply("d")
+        self.assertEqual(self.handled, [("r1", "answer|Four")])
+
+    def test_reply_one_maps_to_first_label(self):
+        with self.arm(options=("Alpha", "Beta", "Gamma")):
+            self.d.handle_typed_reply("1")
+        self.assertEqual(self.handled, [("r1", "answer|Alpha")])
+
+    def test_out_of_range_gets_feedback_and_keeps_pending(self):
+        with self.arm():
+            for text in ("9", "0", "Z", "12", "hi", "", "1a"):
+                self.d.handle_typed_reply(text)
+        self.assertEqual(self.handled, [])
+        self.assertIn("r1", self.d.pending)  # nothing consumed
+        # empty string is not an attempt — every other miss pushes feedback
+        self.assertEqual(len(self.sent), 6)
+        title, msg, req, actions = self.sent[0]
+        self.assertIn("invalid reply", title)
+        self.assertIn("Reply 1-4 (or A-D)", msg)
+        self.assertEqual(req, "r1")
+        self.assertEqual([a["payload"] for a in actions], ["retry", "deny"])
+
+    def test_word_guess_two_gets_feedback(self):
+        with self.arm():
+            self.d.handle_typed_reply("two")
+        self.assertEqual(self.handled, [])
+        self.assertEqual(len(self.sent), 1)   # feedback, not resolution
+        self.assertIn("r1", self.d.pending)
+
+    def test_word_guess_without_question_is_silent(self):
+        self.d.sessions["s1"] = {"response_file": "/tmp/r"}
+        self.d.pending["r1"] = "s1"
+        self.d.handle_typed_reply("two")
+        self.assertEqual(self.handled, [])
+        self.assertEqual(self.sent, [])
+
+    def test_retry_routes_to_single_pending(self):
+        with self.arm():
+            self.d.handle_typed_reply("retry")
+        self.assertEqual(self.handled, [("r1", "retry")])
+
+    def test_deny_routes_to_single_pending(self):
+        with self.arm():
+            self.d.handle_typed_reply("deny")
+        self.assertEqual(self.handled, [("r1", "deny")])
+
+    def test_allow_routes_to_permission_prompt(self):
+        self.d.sessions["s1"] = {"response_file": "/tmp/r"}
+        self.d.pending["r1"] = "s1"
+        with mock.patch.object(
+            self.d, "handle_response",
+            side_effect=lambda r, dec: self.handled.append((r, dec)),
+        ):
+            self.d.handle_typed_reply("allow")
+        self.assertEqual(self.handled, [("r1", "allow")])
+
+    def test_allow_on_question_gets_feedback(self):
+        with self.arm():
+            self.d.handle_typed_reply("allow")
+        self.assertEqual(self.handled, [])    # a question cannot be allowed
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("r1", self.d.pending)
+
+    def test_word_reply_needs_exactly_one_pending(self):
+        with self.arm():
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.handle_typed_reply("retry")
+            self.d.handle_typed_reply("deny")
+        self.assertEqual(self.handled, [])
+        self.assertEqual(self.sent, [])
+
+    def test_two_questions_pending_ambiguous_ignored(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.question_options["r2"] = ["Yes", "No"]
+            self.d.handle_typed_reply("4")
+        self.assertEqual(self.handled, [])
+        self.assertEqual(self.sent, [])       # ambiguous — no feedback either
+
+    def test_permission_prompt_ignored(self):
+        # no options stored (permission notify) → nothing to resolve against
+        self.d.sessions["s1"] = {"response_file": "/tmp/r"}
+        self.d.pending["r1"] = "s1"
+        self.d.handle_typed_reply("1")
+        self.assertEqual(self.handled, [])
+        self.assertEqual(self.sent, [])       # not a question — stay silent
+
+    def test_resolution_clears_pending_and_options(self):
+        self.d.sessions["s1"] = {"response_file": "/tmp/r"}
+        self.d.pending["r1"] = "s1"
+        self.d.question_options["r1"] = ["One", "Two"]
+        with mock.patch.object(self.d, "_write_response") as wr:
+            self.d.handle_typed_reply("2")
+        wr.assert_called_once_with("/tmp/r", "answer|Two")
+        self.assertEqual(self.d.pending, {})
+        self.assertEqual(self.d.question_options, {})
+
+    def test_sse_bare_body_dispatches_typed_reply(self):
+        seen = []
+        self._drive_sse_bodies(["D", "retry", "two", "12"], seen)
+        self.assertEqual(seen, ["D", "retry", "two", "12"])
+
+    def test_sse_ignores_notification_echo_bodies(self):
+        seen = []
+        self._drive_sse_bodies(
+            ["[label] question — Pick one\n1. Alpha: a",
+             "No response after 900s — agent waiting",
+             "{}"],
+            seen,
+        )
+        self.assertEqual(seen, [])
+
+    def _drive_sse_bodies(self, bodies, seen):
+        class LineSse(FakeSseResponse):
+            def __iter__(self_inner):
+                return iter([json.dumps({"message": b}).encode() for b in bodies])
+
+        class SyncThread:
+            def __init__(self, target=None, args=(), daemon=False, **kw):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        with mock.patch.object(self.d, "handle_typed_reply",
+                               side_effect=lambda t: seen.append(t)), \
+             mock.patch.object(daemon_mod.threading, "Thread", SyncThread):
+            drive_sse(self.d, [LineSse()], stop_after=1)
 
 
 class TestLogRotation(unittest.TestCase):

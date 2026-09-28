@@ -14,10 +14,12 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   safe-prefix allowlist, and daemon handoff; the adapter translates payload, decision JSON,
   allowlist source, progress signal, and keystroke injection.
 - **opencode plugin** (`hooks/plugins/hookline.js` → `~/.config/opencode/plugins/hookline.js`) —
-  Node. Sees `permission.asked`, spawns `hookline.sh opencode` with the payload on stdin, and
-  answers the native prompt through a unix-socket bridge (opencode's serverUrl does not accept
-  plain TCP; only the in-process SDK client can reply). Appends a local-answer line on
-  `permission.replied` for the away-detection signal.
+  Node. Sees `permission.asked` and `question.asked`/`question.v2.asked`, spawns
+  `hookline.sh opencode` with the payload on stdin, and answers the native prompt or question
+  dialog through a unix-socket bridge (opencode's serverUrl does not accept plain TCP; only the
+  in-process SDK client can reply — permissions via `postSessionIdPermissionsPermissionId`,
+  questions via `client.question.reply`/`reject`). Appends a local-answer line on
+  `permission.replied` and `question.replied`/`question.rejected` for the away-detection signal.
 - **codex adapter** (`hooks/adapters/codex.sh`) — Bash. Interim Flow A hack over codex's
   `PermissionRequest` event: empty stdout declines, so codex's own approval menu shows; the
   background watcher injects Enter (approve, option 1 preselected) / Esc (cancel) — into the

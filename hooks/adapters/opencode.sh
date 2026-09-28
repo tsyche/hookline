@@ -8,8 +8,14 @@
 # POSTs via its in-process SDK client — opencode's serverUrl does not answer
 # plain TCP (curl gets ECONNREFUSED). Stdout stays empty by contract.
 # Local-answer signal: the plugin appends a line to
-# ~/.local/share/hookline/opencode-answered-<sessionID> on `permission.replied`,
-# which adapter_progress_lines reports as growth.
+# ~/.local/share/hookline/opencode-answered-<sessionID> on `permission.replied`
+# and on `question.replied`/`question.rejected`, which adapter_progress_lines
+# reports as growth.
+# Question dialogs (question.asked payloads: .questions[]) ride the same
+# grace/notify flow with no allowlist/safe-prefix (nothing to match); eligible
+# single-select questions add ntfy option buttons via ADAPTER_ACTIONS (1–3
+# options) plus ADAPTER_OPTIONS — the full label list — so a typed reply
+# ("4" / "D") on the response topic can be resolved by core/daemon.
 
 # shellcheck disable=SC2034  # consumed by install.sh and core.sh
 
@@ -18,6 +24,21 @@ ADAPTER_RESPONSE_ONLY=1  # daemon routes answers via response file, not tmux key
 HOOKLINE_WAITING_AGENT="OpenCode"
 
 adapter_normalize() {
+  IS_QUESTION=""
+  ADAPTER_ACTIONS=""
+  ADAPTER_NO_ACTIONS=""
+  ADAPTER_OPTIONS=""
+  if echo "$INPUT" | jq -e '.questions | type == "array" and length > 0' >/dev/null 2>&1; then
+    # question dialog payload (question.asked) — no permission/matcher fields
+    IS_QUESTION=1
+    TOOL_NAME="question"
+    TOOL_INPUT=$(echo "$INPUT" | jq -r '.questions[0].header // "Question"')
+    CWD="${HOOKLINE_OPC_CWD:-$PWD}"
+    TRANSCRIPT_PATH=""
+    SESSION_ID=$(echo "$INPUT" | jq -r '.sessionID // empty')
+    PERMISSION_ID=$(echo "$INPUT" | jq -r '.id // empty')  # question requestID
+    return 0
+  fi
   TOOL_NAME=$(echo "$INPUT" | jq -r '.permission // "Unknown"')
   TOOL_INPUT=$(echo "$INPUT" | jq -r '.metadata // {} | tostring' | head -c 300)
   CWD="${HOOKLINE_OPC_CWD:-$PWD}"
@@ -38,13 +59,19 @@ adapter_allowlist() {
   return 1
 }
 
-# Decisions are reply-API side effects; stdout is not read by the provider.
+# Question and permission decisions are reply-API side effects over the same
+# bridge; stdout is not read by the provider.
+#   allow on a permission  → reply "once"
+#   deny on a permission   → reply "reject"
+#   answer on a question   → question.reply with the chosen label(s)
+#   deny on a question     → question.reject (dismiss the dialog)
 # Two callers pass "defer":
 #   - core's disabled-flag path, before adapter_normalize ran → log only and
 #     leave the native prompt alone (hookline off = provider default);
 #   - core's safe-prefix/allowlist path, after normalize → auto-approve via
 #     reply "once" (README contract: safe commands approved with no prompt
 #     and no notification; the visible prompt dismisses itself).
+# A dead bridge (TUI exited) is logged and ignored.
 adapter_emit_decision() {
   if [ "$1" = "defer" ] && [ -n "${PERMISSION_ID:-}" ]; then
     log "OUTPUT: auto-approve (opencode safe prefix/allowlist)"
@@ -55,10 +82,18 @@ adapter_emit_decision() {
 }
 
 adapter_emit_initial_decision() {
-  log "OUTPUT: prompt active (opencode native permission prompt, phone flow starting)"
+  if [ -n "${IS_QUESTION:-}" ]; then
+    log "OUTPUT: question active (opencode question dialog, phone flow starting)"
+  else
+    log "OUTPUT: prompt active (opencode native permission prompt, phone flow starting)"
+  fi
 }
 
 adapter_build_message() {
+  if [ -n "${IS_QUESTION:-}" ]; then
+    build_question_message
+    return 0
+  fi
   if [ "$TOOL_NAME" = "bash" ]; then
     _cmd=$(echo "$INPUT" | jq -r '.metadata.command // ""' 2>/dev/null)
     NOTIFY_MSG="$ ${_cmd:0:280}"
@@ -67,6 +102,9 @@ adapter_build_message() {
     NOTIFY_MSG="${TOOL_NAME}: ${_pat:0:280}"
   fi
 }
+
+# Question dialog body/buttons come from build_question_message in core.sh
+# (provider-neutral — claude AskUserQuestion rides the same builder).
 
 # Monotonic local-user-progress counter. The plugin appends one line per
 # permission.replied (local or programmatic); growth = answered at terminal.
@@ -78,26 +116,44 @@ adapter_progress_lines() {
   echo "${n:-0}"
 }
 
-# allow → reply "once"; deny → reply "reject" — resolves the pending prompt.
-# The decision is routed over HOOKLINE_OPC_REPLY_SOCK to the opencode plugin,
+# Route the decision over HOOKLINE_OPC_REPLY_SOCK to the opencode plugin,
 # whose in-process SDK client POSTs it: opencode's serverUrl is not reachable
 # over plain TCP (curl gets ECONNREFUSED), only the plugin's client can answer.
-# A dead bridge (TUI exited) is logged and ignored.
 adapter_inject() {
-  local action="$1" label="$2" response
-  case "$action" in
-    allow) response="once" ;;
-    deny)  response="reject" ;;
-    *)     return 0 ;;
-  esac
+  local action="$1" label="$2" payload
+  if [ -n "${IS_QUESTION:-}" ]; then
+    case "$action" in
+      answer)
+        log "background: routing question answer '$label' ($PERMISSION_ID) to plugin bridge"
+        payload=$(jq -nc --arg rid "$PERMISSION_ID" --arg lab "$label" \
+          '{type:"question",request_id:$rid,answers:[$lab]}' 2>/dev/null)
+        ;;
+      deny)
+        log "background: routing question reject ($PERMISSION_ID) to plugin bridge"
+        payload=$(jq -nc --arg rid "$PERMISSION_ID" \
+          '{type:"question-reject",request_id:$rid}' 2>/dev/null)
+        ;;
+      *)
+        log "background: ignoring '$action' for question dialog (only answer/deny apply)"
+        return 0
+        ;;
+    esac
+  else
+    local response
+    case "$action" in
+      allow) response="once" ;;
+      deny)  response="reject" ;;
+      *)     return 0 ;;
+    esac
+    log "background: routing '$response' ($label) for $PERMISSION_ID to plugin bridge"
+    payload=$(jq -nc --arg r "$response" --arg sid "$SESSION_ID" --arg pid "$PERMISSION_ID" \
+      '{response:$r,session_id:$sid,permission_id:$pid}' 2>/dev/null)
+  fi
   if [ -z "${HOOKLINE_OPC_REPLY_SOCK:-}" ] || [ -z "$SESSION_ID" ] || [ -z "$PERMISSION_ID" ]; then
-    log "background: cannot reply — missing reply socket/session/permission id"
+    log "background: cannot reply — missing reply socket/session/request id"
     return 0
   fi
-  log "background: routing '$response' ($label) for $PERMISSION_ID to plugin bridge"
-  local payload errf rc
-  payload=$(jq -nc --arg r "$response" --arg sid "$SESSION_ID" --arg pid "$PERMISSION_ID" \
-    '{response:$r,session_id:$sid,permission_id:$pid}' 2>/dev/null)
+  local errf rc
   errf="${HOME}/.local/share/hookline/inject-err.txt"
   if "$PYBIN" -c "
 import socket, sys
@@ -115,7 +171,7 @@ except Exception as e:
 finally:
     s.close()
 " <<< "$payload" 2>"$errf"; then
-    log "background: plugin accepted reply '$response'"
+    log "background: plugin accepted reply '$action'"
   else
     rc=$?
     log "background: plugin bridge rc=$rc err=$(tr -d '\n' < "$errf" 2>/dev/null) — leaving prompt to the terminal"

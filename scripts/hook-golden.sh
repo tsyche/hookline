@@ -13,6 +13,7 @@ set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO/hooks/hookline.sh"
+PYBIN="/usr/bin/python3"   # asdf-proof — repo convention (never bare python3)
 PASS=0
 FAIL=0
 
@@ -37,6 +38,7 @@ HOOKLINE_TOPIC=""
 HOOKLINE_NTFY_SERVER="https://ntfy.sh"
 HOOKLINE_GRACE_PERIOD=1
 HOOKLINE_PHONE_TIMEOUT=2
+HOOKLINE_EXTENDED_WAIT=0
 CFG
   case "$setup" in
     allowlist)
@@ -44,6 +46,11 @@ CFG
       ;;
     providers:*)
       printf 'HOOKLINE_PROVIDERS="%s"\n' "${setup#providers:}" >> "$h/.config/hookline/config"
+      ;;
+    extended)
+      # late-answer case: tiny phone timeout, fast extended-window cadence;
+      # later lines win when the config is sourced
+      printf 'HOOKLINE_EXTENDED_WAIT=120\nHOOKLINE_EXTENDED_INTERVAL=1\n' >> "$h/.config/hookline/config"
       ;;
     disabled)
       : > "$h/.config/hookline/disabled"
@@ -118,6 +125,102 @@ run_case_log() {
 
 [ -f "$HOOK" ] || { echo "hook not found: $HOOK"; exit 1; }
 
+# ── Notify-payload capture: fake unix-socket daemon in the sandbox HOME ──
+# Answers "status" with {"pid":...} (so daemon_alive passes), appends every
+# other message to a capture file; asserts the notify message matches a jq
+# filter. Covers the core→daemon JSON contract (no_actions / actions) that
+# stdout/golden cannot see. No network: the empty HOOKLINE_TOPIC keeps the
+# timeout notification from curling anywhere.
+FAKE_DAEMON='
+import json, os, socket, sys
+path, cap = sys.argv[1], sys.argv[2]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(path)
+s.listen(5)
+while True:
+    c, _ = s.accept()
+    data = b""
+    while True:
+        chunk = c.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    try:
+        msg = json.loads(data.decode())
+    except Exception:
+        msg = {}
+    if msg.get("type") == "status":
+        c.sendall(json.dumps({"pid": os.getpid(), "sessions": 0, "pending": 0,
+                              "heartbeat_age": 0, "sse_age": 0}).encode())
+    else:
+        with open(cap, "a") as f:
+            f.write(json.dumps(msg) + "\n")
+        c.sendall(b"ok")
+    c.close()
+'
+
+# run_case_notify_payload <name> <provider> <input-json> <jq-filter> [setup] [expected-stdout]
+# Runs the hook against a fake daemon and asserts the first captured notify
+# message satisfies <jq-filter> (jq -e expression over the notify object).
+# stdout must be empty unless expected-stdout is given (claude/codex emit a
+# decision JSON on stdout; opencode writes nothing).
+run_case_notify_payload() {
+  local name="$1" provider="$2" input="$3" filter="$4" setup="${5:-}" exp_out="${6:-}"
+  local h cap sock out rc notify="" pid ok=1
+  h=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+  cap="$h/notify-cap.jsonl"
+  sock="$h/.local/share/hookline/daemon.sock"
+
+  setup_home "$h" "$setup"
+  mkdir -p "$(dirname "$sock")"
+  "$PYBIN" -c "$FAKE_DAEMON" "$sock" "$cap" 2>/dev/null &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$sock" ] && break
+    sleep 0.2
+  done
+  [ -S "$sock" ] || { echo "FAIL $name (fake daemon did not bind)"; FAIL=$((FAIL + 1)); kill "$pid" 2>/dev/null; rm -rf "$h"; return; }
+
+  out=$(printf '%s' "$input" | HOME="$h" TMUX='' bash "$HOOK" "$provider" 2>/dev/null)
+  rc=$?
+
+  # notify leaves after sleep 1 + grace period (1s); phone poll then runs
+  # PHONE_TIMEOUT=2s before the background process exits (lock file removed).
+  # Wait for the background watcher to finish BEFORE reading the notify line —
+  # the register message lands early and would otherwise end the wait too soon.
+  local lock
+  lock="$h/.local/share/hookline/session-$(printf '%s' "$input" | jq -r '.sessionID // .session_id // empty').lock"
+  for _ in $(seq 1 40); do
+    [ ! -f "$lock" ] && break
+    sleep 0.25
+  done
+  notify=$(jq -c 'select(.type=="notify")' "$cap" 2>/dev/null | head -1)
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+
+  [ -n "$notify" ] || ok=0
+  [ "$rc" -eq 0 ] || ok=0
+  if [ -n "$exp_out" ]; then
+    case "$out" in *"$exp_out"*) ;; *) ok=0 ;; esac
+  else
+    [ "$out" = "" ] || ok=0
+  fi
+  if [ -n "$notify" ]; then
+    printf '%s' "$notify" | jq -e "$filter" >/dev/null 2>&1 || ok=0
+  fi
+  rm -rf "$h"
+
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS $name"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $name (rc=$rc)"
+    echo "  notify: ${notify:-<none>}"
+    echo "  filter: $filter"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 # ── Parity cases: must hold before and after the core/adapter split ──
 run_case "no-config" claude "config not found" '{}' noconfig
 
@@ -173,6 +276,127 @@ if grep -q "HOOKLINE_PROVIDERS" "$HOOK"; then
 else
   echo "SKIP opencode gate cases (entry has no HOOKLINE_PROVIDERS gate yet)"
 fi
+
+# ── opencode question-dialog cases: question.asked payloads ride the same flow;
+#    stdout stays empty, the log carries the question decision + button count ──
+OPC_Q3='{"id":"que_golden","sessionID":"golden-1","questions":[{"question":"Ship it?","header":"Ship","options":[{"label":"Alpha","description":"first"},{"label":"Beta","description":"second"},{"label":"Gamma","description":"third"}]}]}'
+OPC_Q_MULTI='{"id":"que_golden","sessionID":"golden-1","questions":[{"question":"Pick several","header":"Pick","multiple":true,"options":[{"label":"Alpha","description":"first"},{"label":"Beta","description":"second"}]}]}'
+OPC_Q_4OPT='{"id":"que_golden","sessionID":"golden-1","questions":[{"question":"Four is one too many","header":"Pick","options":[{"label":"One","description":"a"},{"label":"Two","description":"b"},{"label":"Three","description":"c"},{"label":"Four","description":"d"}]}]}'
+OPC_Q_STACK='{"id":"que_golden","sessionID":"golden-1","questions":[{"question":"First?","header":"A","options":[{"label":"Yes","description":"y"},{"label":"No","description":"n"}]},{"question":"Second?","header":"B","options":[{"label":"Yes","description":"y"},{"label":"No","description":"n"}]}]}'
+
+run_case_log "opencode-question-ask" opencode "OUTPUT: question active" has "$OPC_Q3"
+
+run_case_log "opencode-question-buttons" opencode "question buttons: 3" has "$OPC_Q3"
+
+run_case_log "opencode-question-multiselect-notify-only" opencode "question buttons: 0" has "$OPC_Q_MULTI"
+
+run_case_log "opencode-question-fouropt-notify-only" opencode "question buttons: 0" has "$OPC_Q_4OPT"
+
+run_case_log "opencode-question-stacked-notify-only" opencode "question buttons: 0" has "$OPC_Q_STACK"
+
+# ── claude AskUserQuestion: same builder as opencode (parity) — defer stdout,
+#    option buttons in the log, and the same notify payload contract ──
+CLAUDE_Q3=$(jq -nc '{tool_name:"AskUserQuestion",
+  tool_input:{questions:[{question:"Ship it?",header:"Ship",
+    options:[{label:"Alpha",description:"first"},
+             {label:"Beta",description:"second"},
+             {label:"Gamma",description:"third"}]}]},
+  cwd:"/tmp",session_id:"golden-2",transcript_path:"/dev/null"}')
+
+run_case_log "claude-question-buttons" claude "question buttons: 3" has "$CLAUDE_Q3" "" "$DEFER"
+
+run_case "claude-question-defers-three-opt" claude "$DEFER" "$CLAUDE_Q3"
+
+# ── notify payload contract: core→daemon JSON carries the notify-only flag ──
+# 4-opt question → no buttons at all (no default trio) but the label list +
+# a reply hint travel for typed ("4"/"D") answering; 3-opt → option actions;
+# permission → actions [] + no_actions false (daemon falls back to the trio).
+run_case_notify_payload "opencode-q4-notify-no-actions" opencode "$OPC_Q_4OPT" \
+  '.no_actions == true and (.actions | length) == 0
+   and .options == ["One", "Two", "Three", "Four"]
+   and (.message | contains("Reply 1-4 (or A-D) to answer"))'
+
+run_case_notify_payload "opencode-q3-notify-option-actions" opencode "$OPC_Q3" \
+  '(.no_actions | not) and (.actions | length) == 3 and .actions[0].payload == "answer|Alpha"
+   and .options == ["Alpha", "Beta", "Gamma"]'
+
+run_case_notify_payload "opencode-permission-notify-default-trio" opencode "$OPC_ASK" \
+  '(.no_actions | not) and (.actions | length) == 0'
+
+run_case_notify_payload "claude-question-notify-options" claude "$CLAUDE_Q3" \
+  '.options == ["Alpha", "Beta", "Gamma"]
+   and (.actions | length) == 3 and .actions[0].payload == "answer|Alpha"
+   and (.message | contains("Reply 1-3 (or A-C) to answer"))' \
+  "" "$DEFER"
+
+# run_case_late_answer <name> <provider> <input-json> <setup>
+# Extended-window contract: after PHONE_TIMEOUT the watcher must stay alive
+# (extended wait) and still dispatch an answer written to the response file
+# afterwards. Waits for the "extended wait" log line before writing, so the
+# answer provably arrives after the phone timeout, not during normal polling.
+run_case_late_answer() {
+  local name="$1" provider="$2" input="$3" setup="$4"
+  local h cap sock out rc pid notify="" rf="" ok=1 stage=0
+  h=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+  cap="$h/notify-cap.jsonl"
+  sock="$h/.local/share/hookline/daemon.sock"
+
+  setup_home "$h" "$setup"
+  mkdir -p "$(dirname "$sock")"
+  "$PYBIN" -c "$FAKE_DAEMON" "$sock" "$cap" 2>/dev/null &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$sock" ] && break
+    sleep 0.2
+  done
+  [ -S "$sock" ] || { echo "FAIL $name (fake daemon did not bind)"; FAIL=$((FAIL + 1)); kill "$pid" 2>/dev/null; rm -rf "$h"; return; }
+
+  out=$(printf '%s' "$input" | HOME="$h" TMUX='' bash "$HOOK" "$provider" 2>/dev/null)
+  rc=$?
+
+  # 1. notify reached the fake daemon
+  for _ in $(seq 1 40); do
+    notify=$(jq -c 'select(.type=="notify")' "$cap" 2>/dev/null | head -1)
+    [ -n "$notify" ] && { stage=1; break; }
+    sleep 0.25
+  done
+  # 2. phone timeout fired → watcher logged the extended window
+  for _ in $(seq 1 40); do
+    grep -q "phone timeout, extended wait" "$h/.local/share/hookline/hookline.log" 2>/dev/null \
+      && { stage=2; break; }
+    sleep 0.25
+  done
+  # 3. write the late answer the watcher must still pick up
+  rf=$(printf '%s' "$notify" | jq -r '.response_file // empty')
+  [ "$stage" -eq 2 ] && [ -n "$rf" ] && printf 'answer|Alpha' > "$rf"
+  # 4. watcher dispatches and exits → lock gone
+  local lock
+  lock="$h/.local/share/hookline/session-$(printf '%s' "$input" | jq -r '.sessionID // empty').lock"
+  for _ in $(seq 1 40); do
+    [ ! -f "$lock" ] && { stage=3; break; }
+    sleep 0.25
+  done
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+
+  grep -q "phone timeout, extended wait" "$h/.local/share/hookline/hookline.log" 2>/dev/null || ok=0
+  grep -q "daemon response: answer|Alpha" "$h/.local/share/hookline/hookline.log" 2>/dev/null || ok=0
+  [ "$stage" -eq 3 ] || ok=0
+  [ "$rc" -eq 0 ] || ok=0
+  [ "$out" = "" ] || ok=0
+  rm -rf "$h"
+
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS $name"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $name (rc=$rc, stage=$stage)"
+    echo "  notify: ${notify:-<none>}"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+run_case_late_answer "opencode-late-answer-in-extended-window" opencode "$OPC_Q3" extended
 
 # ── codex adapter cases: PermissionRequest contract — the initial decision is
 #    an empty stdout (decline → codex's native approval menu owns the UI);

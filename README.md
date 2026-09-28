@@ -68,6 +68,39 @@ Use your agent normally. When a permission prompt fires:
 | **Deny** | Rejects the request; terminal prompt auto-dismisses with denial |
 | **Retry** | Resends a fresh notification (useful when you catch it late) |
 
+You can also type a reply in the ntfy channel instead of tapping: `allow`,
+`deny`, or `retry` work anywhere a button would.
+
+### Late replies (extended window)
+
+After `HOOKLINE_PHONE_TIMEOUT` the phone gets a "Prompt expired" notice, but the
+background watcher stays alive for another `HOOKLINE_EXTENDED_WAIT` seconds
+(default 3600 = 1h; 0 disables). Anything sent inside that window still lands —
+including a typed `retry` or a button tap on the earlier notification — and the
+expiry notice says how long you have. When the window closes, the watcher gives
+up and the prompt is terminal-only again.
+
+### Question dialogs (OpenCode + Claude Code)
+
+When OpenCode asks a question (`question.asked`) or Claude Code shows an
+AskUserQuestion dialog, hookline applies the same grace period and notifies your
+phone if you're away. For a single single-select question with 1–3 options, the
+notification's buttons are the options themselves — tap one and the dialog
+answers (OpenCode in-process via the reply bridge; Claude via keystroke
+injection into the picker). You can also reply in the ntfy channel with an
+option's number (`4`) or letter (`D`) — any option count works, since typing
+goes past ntfy's 3-button cap; the body lists every option and ends with the
+valid replies. Reply `retry` to re-notify or `deny` to dismiss. A reply that
+doesn't match any option (like a typed word or an out-of-range number) gets a
+correction notification listing the valid replies plus Retry/Deny buttons — the
+question stays pending. Multi-select and stacked questions stay informational
+only (the body lists every question, option, and description) and you answer at
+the terminal. Notifications only fire when the ntfy config is set.
+
+Known limits: ntfy allows 3 buttons and no structured input — multi-select
+questions, stacked questions, and typed/custom answers (anything outside the
+listed options) require the terminal.
+
 ### Auto-approved commands
 
 The following Bash command prefixes are automatically approved without any prompt or notification:
@@ -113,6 +146,8 @@ HOOKLINE_TOPIC="your-ntfy-topic"         # required — subscribe to this in the
 HOOKLINE_NTFY_SERVER="https://ntfy.sh"   # change for self-hosted ntfy
 HOOKLINE_GRACE_PERIOD=20                 # seconds before phone notification fires
 HOOKLINE_PHONE_TIMEOUT=900              # seconds to wait for phone response (15 min)
+HOOKLINE_EXTENDED_WAIT=3600             # extra seconds the watcher listens after the phone timeout (0 disables)
+HOOKLINE_EXTENDED_INTERVAL=180          # cadence of extended-window checks (seconds)
 HOOKLINE_MAX_RETRIES=3                   # number of Retry button taps allowed
 HOOKLINE_NTFY_USERNAME=""               # for self-hosted ntfy with auth
 HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
@@ -203,6 +238,8 @@ See [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control) for au
 - **Keystroke injection** — terminal prompt auto-dismisses when phone responds (reply-API providers resolve in-process instead)
 - **SSE-based daemon** — persistent connection for instant response; no polling delay
 - **Retry button** — instant resend without re-waiting the grace period
+- **Typed replies** — option numbers/letters plus `retry`/`deny` words from the ntfy channel; invalid replies get a correction notification
+- **Extended window** — late answers still land for up to an hour after the phone timeout
 - **Fallback mode** — works without the daemon via inline polling
 - **Multi-provider registry** — Claude, Codex, OpenCode, and adapter-shaped future agents behind one core
 

@@ -12,6 +12,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -34,6 +35,13 @@ SSE_HEARTBEAT_PATH = os.path.expanduser("~/.local/share/hookline/sse-heartbeat")
 # idle connections reconnect on the same cadence — cheap — while a frozen
 # urllib read leaves the heartbeat stale so the watchdog can restart us.
 SSE_READ_TIMEOUT = 300
+
+# Bare replies accepted from the main topic (typed in the ntfy app): short
+# alnum only — option numbers/letters ("4"/"D"), retry/allow/deny words, and
+# misses like "two" that get routed to invalid-reply feedback. Multi-char
+# bodies with spaces/punctuation are our own notification echoes — never
+# parsed as decisions.
+TYPED_REPLY_RE = re.compile(r'^[0-9A-Za-z]{1,12}$')
 
 # daemon.log is append-only and used to grow forever (plus the launchd plist
 # points stdout/stderr at it). Cap it: one rotated backup, then overwrite.
@@ -107,6 +115,9 @@ class Daemon:
             self.log.propagate = False
         self.sessions = {}  # session_id → info dict
         self.pending  = {}  # req_id → session_id
+        # req_id → option labels for single-select questions, so a typed
+        # response-topic reply ("4" / "D") can map back to a label
+        self.question_options = {}
         self.lock     = threading.Lock()
         self._stop    = threading.Event()
 
@@ -133,19 +144,33 @@ class Daemon:
         with open(THROTTLE_PATH, 'w') as f:
             f.write(str(time.time()))
 
-    def send_ntfy(self, config, title, message, req_id):
+    def send_ntfy(self, config, title, message, req_id, actions=None):
         self._throttle()
         topic      = config.get('HOOKLINE_TOPIC', '')
         server     = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
         resp_topic = f"{topic}-response"
-        payload = json.dumps({
-            'topic': topic, 'title': title, 'message': message,
-            'priority': 4, 'tags': ['lock'],
-            'actions': [
+        # Custom actions (question-dialog options): each {label, payload} posts
+        # "<payload>|<req_id>" to the response topic — the SSE parser's
+        # rsplit('|', 1) keeps "answer|<label>" as the decision. ntfy caps
+        # actions at 3; default trio when actions is None (nothing supplied).
+        # An explicit empty list means "no buttons" (notify-only question).
+        if actions is None:
+            ntfy_actions = [
                 {'action':'http','label':'Allow','url':f"{server}/{resp_topic}",'method':'POST','body':f"allow|{req_id}"},
                 {'action':'http','label':'Deny', 'url':f"{server}/{resp_topic}",'method':'POST','body':f"deny|{req_id}"},
                 {'action':'http','label':'Retry','url':f"{server}/{resp_topic}",'method':'POST','body':f"retry|{req_id}"},
-            ],
+            ]
+        else:
+            ntfy_actions = [
+                {'action': 'http', 'label': a.get('label', '?'),
+                 'url': f"{server}/{resp_topic}", 'method': 'POST',
+                 'body': f"{a.get('payload', '')}|{req_id}"}
+                for a in actions
+            ]
+        payload = json.dumps({
+            'topic': topic, 'title': title, 'message': message,
+            'priority': 4, 'tags': ['lock'],
+            'actions': ntfy_actions,
         }).encode()
         req = urllib.request.Request(
             f"{server}/", data=payload, headers=self._ntfy_headers(config), method='POST'
@@ -161,11 +186,16 @@ class Daemon:
 
     # ── SSE listener ───────────────────────────────────────────────────────────
 
-    def sse_listener(self):
+    def sse_listener(self, suffix="-response"):
         # Log state changes only: the first connect, the first failure of an
         # error streak, and the recovery after one. Routine idle recycles
         # (SSE_READ_TIMEOUT with a healthy server) are silent — they used to
         # write two lines every ~5 min and grow daemon.log without bound.
+        # Two listeners run: "-response" (button-tap HTTP actions, full body
+        # parsing) and the bare topic "" (typed replies from the ntfy app land
+        # on the topic the notification came from) — bare-only there, so our
+        # own echoed notifications never hit the decision parser.
+        bare_only = (suffix == "")
         announce = True       # next successful connect is a state change
         streak_logged = False # first failure of the current streak
         while not self._stop.is_set():
@@ -173,7 +203,7 @@ class Daemon:
                 config = load_config()
                 topic  = config.get('HOOKLINE_TOPIC', '')
                 server = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
-                url    = f"{server}/{topic}-response/json"
+                url    = f"{server}/{topic}{suffix}/json"
                 req = urllib.request.Request(url, headers=self._ntfy_headers(config))
                 with urllib.request.urlopen(req, timeout=SSE_READ_TIMEOUT) as resp:
                     if announce:
@@ -191,11 +221,21 @@ class Daemon:
                         try:
                             msg  = json.loads(line)
                             body = msg.get('message', '')
-                            if '|' in body:
+                            if '|' in body and not bare_only:
                                 decision, req_id = body.rsplit('|', 1)
                                 threading.Thread(
                                     target=self.handle_response,
                                     args=(req_id.strip(), decision.strip()),
+                                    daemon=True,
+                                ).start()
+                            elif TYPED_REPLY_RE.match(body.strip()):
+                                # bare typed reply: option number/letter
+                                # ("4"/"D") or a word ("retry"/"deny"/"allow")
+                                # — alnum-only and short so echoed
+                                # notification bodies never reach the resolver
+                                threading.Thread(
+                                    target=self.handle_typed_reply,
+                                    args=(body.strip(),),
                                     daemon=True,
                                 ).start()
                         except json.JSONDecodeError:
@@ -206,17 +246,113 @@ class Daemon:
                 pass
             except Exception as e:
                 if not streak_logged:
-                    self.log.warning(f"SSE lost ({e}), reconnecting in 5s")
+                    self.log.warning(f"SSE lost on {topic}{suffix} ({e}), reconnecting in 5s")
                     streak_logged = True
                 announce = True
                 time.sleep(5)
 
     # ── response routing ───────────────────────────────────────────────────────
 
+    def handle_typed_reply(self, text):
+        """Bare reply from the ntfy app: number/letter option, or word.
+
+        Words: "retry"/"deny" route to any single pending prompt (question
+        reject works the same as permission deny); "allow" only fits
+        permission prompts — on a question it gets invalid-reply feedback.
+        Option pick: resolves to answer|<label> only when exactly one
+        question with an option list is pending. Anything else that looks
+        like an attempt (exactly one question pending) pushes a feedback
+        notification with Retry/Deny buttons; ambiguous replies are logged
+        and dropped.
+        """
+        low = text.lower()
+
+        if low in ('allow', 'deny', 'retry'):
+            with self.lock:
+                pend = list(self.pending)
+            if len(pend) != 1:
+                self.log.info(
+                    f"word reply {low!r}: {len(pend)} prompt(s) pending, ignoring"
+                )
+                return
+            req_id = pend[0]
+            if low == 'allow':
+                with self.lock:
+                    is_question = req_id in self.question_options
+                if is_question:
+                    with self.lock:
+                        options = list(self.question_options.get(req_id, []))
+                    self._invalid_reply(req_id, text, options)
+                    return
+                self.handle_response(req_id, 'allow')
+            else:
+                self.handle_response(req_id, low)
+            return
+
+        with self.lock:
+            candidates = [r for r in self.question_options if r in self.pending]
+        if len(candidates) != 1:
+            self.log.info(
+                f"typed reply {text!r}: {len(candidates)} question(s) with "
+                "options pending, ignoring"
+            )
+            return
+        req_id = candidates[0]
+        with self.lock:
+            options = list(self.question_options.get(req_id, []))
+        label = None
+        if len(text) == 1:
+            if text.isdigit():
+                idx = int(text) - 1
+            elif text.isalpha() and text.isascii():
+                idx = ord(text.lower()) - ord('a')
+            else:
+                idx = -1
+            if 0 <= idx < len(options):
+                label = options[idx]
+        if label is None:
+            self.log.info(
+                f"[{req_id[:16]}] typed reply {text!r} not in "
+                f"1-{len(options)}, invalid reply"
+            )
+            if text:   # empty body is not an attempt — nothing to correct
+                self._invalid_reply(req_id, text, options)
+            return
+        self.handle_response(req_id, f"answer|{label}")
+
+    def _invalid_reply(self, req_id, text, options):
+        """Push a correction notification for a reply that didn't resolve.
+
+        Keeps the question pending — Retry re-notifies, Deny rejects.
+        """
+        with self.lock:
+            session_id = self.pending.get(req_id, '')
+            session = dict(self.sessions.get(session_id, {}))
+            title = session.get('notify_title', 'hookline')
+        n = len(options)
+        if n <= 0:
+            return
+        hint = f"1-{n}"
+        if n <= 26:
+            hint += f" (or A-{chr(ord('A') + n - 1)})"
+        self.send_ntfy(
+            load_config(),
+            f"{title} — invalid reply",
+            f"'{text}' is not a valid answer for this question.\n"
+            f"Reply {hint}, retry, or deny.",
+            req_id,
+            actions=[
+                {'label': 'Retry', 'payload': 'retry'},
+                {'label': 'Deny',  'payload': 'deny'},
+            ],
+        )
+
     def handle_response(self, req_id, decision):
         with self.lock:
             session_id = self.pending.get(req_id)
         if not session_id:
+            with self.lock:
+                self.question_options.pop(req_id, None)
             self.log.info(f"[{req_id[:16]}] unknown req_id, ignoring")
             return
         with self.lock:
@@ -258,12 +394,44 @@ class Daemon:
                 self._write_response(response_file, decision)
             with self.lock:
                 self.pending.pop(req_id, None)
+                self.question_options.pop(req_id, None)
+
+        elif decision.startswith('answer|'):
+            # Question-dialog option (tap or typed reply): claude/other
+            # tmux sessions get the option's number + Enter in the exact pane
+            # (the picker accepts number keys); response-only sessions (the
+            # opencode plugin bridge) get the response file and the hook's
+            # background process relays it over the bridge.
+            label = decision[7:]
+            options = self.question_options.get(req_id, [])
+            idx = options.index(label) + 1 if label in options else 0
+            if tmux_pane and idx:
+                sock_args = ['-S', tmux_socket] if tmux_socket else []
+                self.log.info(
+                    f"inject answer {idx} ({label}) via tmux pane {tmux_pane} ({TMUX_BIN})"
+                    + (f" socket={tmux_socket}" if tmux_socket else "")
+                )
+                result = subprocess.run(
+                    [TMUX_BIN] + sock_args + ['send-keys', '-t', tmux_pane, str(idx), 'Enter'],
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    self.log.error(
+                        f"tmux inject failed (rc={result.returncode}): "
+                        f"{result.stderr.decode(errors='replace').strip()}"
+                    )
+            else:
+                self._write_response(response_file, decision)
+            with self.lock:
+                self.pending.pop(req_id, None)
+                self.question_options.pop(req_id, None)
 
         elif decision == 'retry':
             # Tell hook to resend — it controls retry count
             self._write_response(response_file, 'retry')
             with self.lock:
                 self.pending.pop(req_id, None)
+                self.question_options.pop(req_id, None)
 
     def _write_response(self, response_file, decision):
         if not response_file:
@@ -286,13 +454,23 @@ class Daemon:
         message       = msg.get('message', '')
         response_file = msg.get('response_file', '')
         max_retries   = int(msg.get('max_retries', 2))
+        # no_actions (notify-only question) → explicit empty list: no buttons.
+        # Permissions also send actions:[], so the flag, not the array, decides.
+        if msg.get('no_actions'):
+            actions = []
+        else:
+            actions = msg.get('actions') or None
+        options   = msg.get('options') or []   # typed-reply label list (questions)
 
         config = load_config()
         with self.lock:
             for old_req in [r for r, s in self.pending.items() if s == session_id]:
                 self.log.info(f"[{old_req[:16]}] superseded, cancelling")
                 del self.pending[old_req]
+                self.question_options.pop(old_req, None)
             self.pending[req_id] = session_id
+            if options:
+                self.question_options[req_id] = options
             sess = self.sessions.setdefault(session_id, {})
             sess.update({
                 'notify_title':   title,
@@ -302,7 +480,7 @@ class Daemon:
                 'retry_count':    0,
             })
 
-        self.send_ntfy(config, title, message, req_id)
+        self.send_ntfy(config, title, message, req_id, actions)
 
     def handle_connection(self, conn):
         try:
@@ -341,6 +519,7 @@ class Daemon:
                 req_id = msg.get('req_id', '')
                 with self.lock:
                     self.pending.pop(req_id, None)
+                    self.question_options.pop(req_id, None)
                 self.log.info(f"[{req_id[:16]}] cancelled by hook")
                 conn.sendall(b'ok')
 
@@ -402,7 +581,8 @@ class Daemon:
         self.log.info(f"hookline daemon starting pid={os.getpid()} tmux={TMUX_BIN}")
         touch(HEARTBEAT_PATH)
         touch(SSE_HEARTBEAT_PATH)
-        threading.Thread(target=self.sse_listener, daemon=True).start()
+        threading.Thread(target=self.sse_listener, args=("-response",), daemon=True).start()
+        threading.Thread(target=self.sse_listener, args=("",), daemon=True).start()
         self.serve()
 
         if os.path.exists(PID_PATH):

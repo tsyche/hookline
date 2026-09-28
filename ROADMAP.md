@@ -99,15 +99,30 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
      codex's decline trick
    - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
 
-7. **Notify on question events (opencode)** (~TBD after research)
-   - Gap: opencode `AskUserQuestion` never notifies — the plugin only hooks `permission.asked`
-     (confirmed 2026-09-27; delivery chain healthy, 5 tool-prompt notifications delivered same morning)
-   - First step is research only: does the opencode SDK expose any question/ask event at all?
-   - Needs user approval before any investigation beyond a quick read
+7. **Question-dialog phone flow (opencode + claude/blackbox)** — implemented 2026-09-27/28, pending commit/release
+   - Gap closed: plugin hooks `question.asked`/`question.v2.asked` (spawns the hook) and
+     `question.replied`/`rejected` (local-answer counter) — question dialogs get the same
+     20s grace + phone notification as permission prompts; claude AskUserQuestion rides the
+     same `build_question_message` builder (moved to core.sh) for identical body/buttons
+   - Tap-to-answer: a single single-select question with 1–3 options gets its options as ntfy
+     buttons → reply bridge → `question.reply` (v2 SDK client built over the injected v1
+     client's transport — v1 has no `question` API and plain TCP to serverUrl is refused);
+     claude answers inject the option number (daemon tmux send-keys, osascript otherwise);
+     multi-select/stacked stay notify-only with the full question in the body
+   - Typed replies: single-select questions ship their label list in the notify payload —
+     replying with a number (`4`) or letter (`D`) on the bare topic resolves to
+     `answer|<label>` (second bare-topic SSE listener); works for any option count past
+     ntfy's 3-button cap, which also suppresses the default trio via `no_actions`
+   - Word replies: `retry`/`deny` anywhere (`allow` for permissions); invalid replies push
+     a correction notification with Retry/Deny buttons instead of silence
+   - Extended window: watcher survives the phone timeout for `HOOKLINE_EXTENDED_WAIT`
+     (default 3600s, checks every 180s) so late answers and `retry` still land; expiry
+     cancels the pending entry
+   - Tests: 10 new golden cases (37 total) + 19 new daemon tests (49 total)
 
 8. **opencode plugin tests** (~1–2h)
    - `hooks/plugins/hookline.js` is the only adapter layer with zero automated coverage —
-     the shell hook has 25 golden cases, the Python daemon has 22 unit tests, the Node plugin has none
+     the shell hook has 37 golden cases, the Python daemon has 49 unit tests, the Node plugin has none
    - `node --test` with a fake `permission.asked` event → assert spawn of `hookline.sh opencode`,
      payload plumbing, and the bridge reply path
    - Acceptance: a `test-plugin` recipe runs green locally and joins CI alongside the other gates
@@ -127,6 +142,27 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
     - Extend `check-docs` to verify relative markdown links (ROADMAP → ledger, README → ROADMAP, …)
       so cross-doc references can't rot silently
     - Acceptance: a deliberately broken relative link fails `just check-docs`
+
+12. **Long question lists — chunked/compressed bodies** (~1–2h)
+    - Today the notification body truncates at 1500 chars, so a question with a long option
+      list (or verbose descriptions) can lose options at the tail — typing still resolves
+      any number, but the reader can't see what they're picking
+    - Route A (cheap): compress rendering once over budget — drop descriptions, shorten
+      labels, keep every numbered option visible; Route B: split the body across two ntfy
+      messages (same question/req — typing `17` works from either)
+    - Acceptance: a 30-option question with descriptions arrives fully visible and answerable
+      by number
+
+13. **`context` keyword — side-thread assessed summary** (~2–4h)
+    - Type `context` while a question/permission is pending → a short assessed summary of
+      where the conversation stands (not just raw lines) arrives as a new notification; the
+      original prompt stays pending and is answered afterwards as usual
+    - opencode: plugin-side one-shot side session over the in-process SDK client (list
+      messages → prompt for summary → notify); claude/codex: headless CLI call
+      (`claude -p` / `codex exec`) fed the transcript tail; fallback to raw tail when the
+      model call fails or times out
+    - Acceptance: `context` during a pending prompt returns a ≤10-line summary and the
+      original prompt is still answerable by button/typed reply
 
 ## Phase 7 — Remote control + E2E
 

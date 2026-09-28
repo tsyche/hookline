@@ -6,6 +6,20 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- opencode question-dialog notifications: `question.asked` (and `question.v2.asked`) now ride the same grace-period phone flow as permissions; single single-select questions with 1–3 options answer from ntfy buttons via `client.question.reply`, everything else is notify-only (ntfy's 3-button cap); `question.replied`/`rejected` feed the local-answer signal
+- typed option replies: single-select questions ship their full label list in the notify payload and the body prompts for it — reply with an option's number (`4`) or letter (`D`) on the response topic to answer, which makes 4+ option questions answerable from the phone despite the 3-button cap
+- claude/blackbox AskUserQuestion parity: question dialogs ride the shared `build_question_message` body/buttons/typed-reply flow; the daemon answers via tmux option-number injection (bare terminals get osascript keystrokes through the response file)
+- word replies: type `retry` or `deny` in the ntfy channel anywhere a button would work (`allow` for permission prompts) — no tapping needed
+- invalid-reply feedback: a reply that resolves to no option (typed word, out-of-range number) pushes a correction notification with the valid replies and Retry/Deny buttons; the question stays pending
+- extended window: after the phone timeout the watcher stays alive for `HOOKLINE_EXTENDED_WAIT` seconds (default 3600, checks every `HOOKLINE_EXTENDED_INTERVAL`, default 180) so late answers, button taps, and typed `retry` still land; the expiry notice says how long. Legacy (no-daemon) path unchanged
+
+### Fixed
+
+- opencode question replies use a v2 SDK client built over the injected client's own transport (in-process fetch); the injected client is the v1 surface with no `question` API, so replies previously died with `TypeError: undefined is not an object`
+- notify-only notifications (4+ option, multi-select, stacked questions) no longer arrive with the default Allow/Deny/Retry buttons — an explicit `no_actions` flag distinguishes them from permissions, which keep the trio
+
 ## [1.5.0] - 2026-09-27
 
 ### Added

@@ -69,6 +69,66 @@ finally:
   [[ "$resp" == *'"pid"'* ]]
 }
 
+# Question dialog → human-readable body (every question, numbered options with
+# descriptions) + optional ntfy action buttons. Provider-neutral: reads
+# `.questions` (opencode question.asked) or `.tool_input.questions` (claude
+# AskUserQuestion). ntfy allows 3 buttons max and a question can be
+# multi-select/stacked/custom, so buttons only when there is exactly one
+# single-select question with 1–3 options: each option becomes a button whose
+# POST body is "answer|<label>" (daemon appends "|<req_id>"). Everything else
+# stays notify-only — the body carries the full question for reading at the
+# terminal. Labels are sanitized (| would corrupt the response-topic format).
+# Sets: NOTIFY_MSG, ADAPTER_OPTIONS (full label list for typed replies),
+# ADAPTER_ACTIONS (button payload list), ADAPTER_NO_ACTIONS=1 (suppress trio).
+build_question_message() {
+  local qcount nopts multiple bc=0
+  NOTIFY_MSG=$(echo "$INPUT" | jq -r '
+    def qs: (.questions // .tool_input.questions // []);
+    [qs[] |
+      ((.header // "Question") + " — " + (.question // "")) +
+      (if ((.options // []) | length) > 0 then
+        "\n" + ([.options | to_entries[] |
+          "\(.key + 1). \(.value.label): \(.value.description // "")"] | join("\n"))
+      else "" end)
+    ] | join("\n\n")' 2>/dev/null)
+  [ -n "$NOTIFY_MSG" ] || NOTIFY_MSG="Question (see terminal)"
+  NOTIFY_MSG="${NOTIFY_MSG:0:1500}"   # ntfy text body cap is 4096 bytes
+
+  qcount=$(echo "$INPUT" | jq -r '(.questions // .tool_input.questions // []) | length' 2>/dev/null)
+  nopts=$(echo "$INPUT" | jq -r '(.questions // .tool_input.questions // [])[0].options | length' 2>/dev/null)
+  multiple=$(echo "$INPUT" | jq -r '(.questions // .tool_input.questions // [])[0].multiple // false' 2>/dev/null)
+  if [ "${qcount:-0}" -eq 1 ] && [ "$multiple" = "false" ] && [ "${nopts:-0}" -ge 1 ]; then
+    # single-select (any option count): full label list travels in the notify
+    # payload so the daemon can map a typed reply ("4" or "D") to a label
+    ADAPTER_OPTIONS=$(echo "$INPUT" | jq -c '
+      def qs: (.questions // .tool_input.questions // []);
+      [qs[0].options[].label | gsub("\\|"; "/")]' 2>/dev/null)
+    # hint so the phone knows typing works when tapping doesn't (ntfy caps 3)
+    if [ "${nopts:-0}" -le 26 ]; then
+      local letter
+      letter=$(printf %s abcdefghijklmnopqrstuvwxyz | cut -c "$nopts" | tr '[:lower:]' '[:upper:]')
+      NOTIFY_MSG="$NOTIFY_MSG"$'\n\n'"Reply 1-${nopts} (or A-${letter}) to answer"
+    else
+      NOTIFY_MSG="$NOTIFY_MSG"$'\n\n'"Reply 1-${nopts} to answer"
+    fi
+    if [ "${nopts:-0}" -le 3 ]; then
+      ADAPTER_ACTIONS=$(echo "$INPUT" | jq -c '
+        def qs: (.questions // .tool_input.questions // []);
+        [qs[0].options[] |
+          (.label | gsub("\\|"; "/")) as $l |
+          {label: $l, payload: ("answer|" + $l)}]' 2>/dev/null)
+    else
+      # ntfy caps buttons at 3 — body + typed reply carry 4+ option questions
+      ADAPTER_NO_ACTIONS=1
+    fi
+  else
+    # multi-select/stacked: one tap or number cannot compose the answer
+    ADAPTER_NO_ACTIONS=1
+  fi
+  [ -n "$ADAPTER_ACTIONS" ] && bc=$(echo "$ADAPTER_ACTIONS" | jq -r 'length' 2>/dev/null)
+  log "question buttons: ${bc:-0} (qcount=${qcount:-?} opts=${nopts:-?} multiple=$multiple no_actions=${ADAPTER_NO_ACTIONS:-0})"
+}
+
 core_main() {
   if [ -f "$DISABLED_FLAG" ]; then
     adapter_emit_decision defer
@@ -133,6 +193,12 @@ core_main() {
   GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
   PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
   MAX_RETRIES="${HOOKLINE_MAX_RETRIES:-3}"
+  # Extended wait: after the phone timeout the watcher stays alive so late
+  # answers (including the typed "retry") still land. 0 disables.
+  EXTENDED_WAIT="${HOOKLINE_EXTENDED_WAIT:-3600}"
+  EXTENDED_INTERVAL="${HOOKLINE_EXTENDED_INTERVAL:-180}"
+  [[ "$EXTENDED_WAIT" =~ ^[0-9]+$ ]] || EXTENDED_WAIT=3600
+  [[ "$EXTENDED_INTERVAL" =~ ^[0-9]+$ ]] || EXTENDED_INTERVAL=180
 
   # 4. Register session with daemon (captures TTY + terminal info for routing).
   #    ADAPTER_RESPONSE_ONLY=1 (opencode: resolves decisions itself via the
@@ -196,13 +262,17 @@ core_main() {
       local _topic="${HOOKLINE_TOPIC:-}"
       local _server="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
       [ -z "$_topic" ] && return
+      local _msg="No response after ${PHONE_TIMEOUT}s — ${HOOKLINE_WAITING_AGENT} is waiting at the terminal"
+      if [ "${EXTENDED_WAIT:-0}" -gt 0 ]; then
+        _msg="${_msg}; phone still listening $((EXTENDED_WAIT / 60))m (reply retry)"
+      fi
       local _auth=()
       [ -n "$HOOKLINE_NTFY_USERNAME" ] && _auth=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
       curl -s "${_auth[@]}" -H "Content-Type: application/json" \
         -d "$(jq -nc \
           --arg topic "$_topic" \
           --arg title "[$SESSION_LABEL] Prompt expired" \
-          --arg message "No response after ${PHONE_TIMEOUT}s — ${HOOKLINE_WAITING_AGENT} is waiting at the terminal" \
+          --arg message "$_msg" \
           '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
         "${_server}/" &>/dev/null
     }
@@ -219,6 +289,11 @@ core_main() {
 
       retries=0
       current_req_id="$REQ_ID"
+      # Notify-only questions (ADAPTER_NO_ACTIONS=1) must suppress the
+      # daemon's default Allow/Deny/Retry trio — sent as an explicit flag
+      # because permissions also carry an empty actions array.
+      notify_no_actions=false
+      [ -n "${ADAPTER_NO_ACTIONS:-}" ] && notify_no_actions=true
       while true; do
         rm -f "$RESPONSE_FILE"
         daemon_send "$(jq -nc \
@@ -229,7 +304,10 @@ core_main() {
           --arg message "$NOTIFY_MSG" \
           --arg response_file "$RESPONSE_FILE" \
           --argjson max_retries "$MAX_RETRIES" \
-          '{type:$type,session_id:$session_id,req_id:$req_id,title:$title,message:$message,response_file:$response_file,max_retries:$max_retries}')"
+          --argjson actions "${ADAPTER_ACTIONS:-[]}" \
+          --argjson options "${ADAPTER_OPTIONS:-[]}" \
+          --argjson no_actions "$notify_no_actions" \
+          '{type:$type,session_id:$session_id,req_id:$req_id,title:$title,message:$message,response_file:$response_file,max_retries:$max_retries,actions:$actions,options:$options,no_actions:$no_actions}')"
 
         # Poll for daemon's response, checking transcript in parallel
         decision=""
@@ -254,13 +332,51 @@ core_main() {
         done
 
         if [ -z "$decision" ]; then
-          log "background: timed out, giving up"
           send_timeout_notification
-          exit 0
+          if [ "$EXTENDED_WAIT" -le 0 ]; then
+            log "background: timed out, giving up"
+            daemon_send "$(jq -nc --arg type "cancel" --arg req_id "$current_req_id" '{type:$type,req_id:$req_id}')"
+            exit 0
+          fi
+          # Extended wait: the watcher stays alive past the phone timeout so
+          # late replies — button taps, typed options, "retry" — still land.
+          # Pending daemon entry survives this window; expiry cancels it.
+          log "background: phone timeout, extended wait ${EXTENDED_WAIT}s (checks every ${EXTENDED_INTERVAL}s)"
+          deadline=$EXTENDED_WAIT
+          while [ -z "$decision" ] && [ "$deadline" -gt 0 ]; do
+            slice=$EXTENDED_INTERVAL
+            [ "$slice" -gt "$deadline" ] && slice=$deadline
+            elapsed=0
+            while [ "$elapsed" -lt "$slice" ]; do
+              sleep 1
+              elapsed=$((elapsed + 1))
+              cur=$(adapter_progress_lines)
+              if [ "$cur" -gt "$INITIAL_LINES" ]; then
+                log "background: transcript grew during extended wait, user answered at terminal"
+                daemon_send "$(jq -nc --arg type "cancel" --arg req_id "$current_req_id" '{type:$type,req_id:$req_id}')"
+                exit 0
+              fi
+              if [ -f "$RESPONSE_FILE" ]; then
+                decision=$(cat "$RESPONSE_FILE")
+                rm -f "$RESPONSE_FILE"
+                break
+              fi
+            done
+            deadline=$((deadline - slice))
+          done
+          if [ -z "$decision" ]; then
+            log "background: extended wait expired, giving up"
+            daemon_send "$(jq -nc --arg type "cancel" --arg req_id "$current_req_id" '{type:$type,req_id:$req_id}')"
+            exit 0
+          fi
         fi
         log "background: daemon response: $decision"
 
-        if [ "$decision" = "allow" ]; then
+        # "answer|<label>" is a question-dialog option tapped on the phone
+        if [[ "$decision" == answer\|* ]]; then
+          adapter_inject "answer" "${decision#answer|}"
+          exit 0
+        elif [ "$decision" = "allow" ]; then
           adapter_inject "allow" "Allow"
           exit 0
         elif [ "$decision" = "deny" ]; then
@@ -281,6 +397,7 @@ core_main() {
     fi
 
     # — Legacy fallback (no daemon): inline polling —
+    EXTENDED_WAIT=0   # extended window needs the daemon; legacy unchanged
     log "background: daemon not available, using legacy polling"
     TOPIC="${HOOKLINE_TOPIC:?hookline: HOOKLINE_TOPIC not set in config}"
     NTFY_SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
@@ -300,18 +417,29 @@ core_main() {
       log "background: sending notification..."
       AUTH_ARGS=()
       [ -n "$HOOKLINE_NTFY_USERNAME" ] && AUTH_ARGS=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+      # Action buttons: adapter-provided (question options → "answer|<label>")
+      # or the default Allow/Deny/Retry trio. ntfy caps actions at 3.
+      # ADAPTER_NO_ACTIONS (notify-only question) sends no buttons at all.
+      local _resp_url="${NTFY_SERVER}/${RESPONSE_TOPIC}"
+      if [ -n "${ADAPTER_NO_ACTIONS:-}" ]; then
+        actions_json='[]'
+      elif [ -n "${ADAPTER_ACTIONS:-}" ]; then
+        actions_json=$(jq -nc --arg url "$_resp_url" --arg req "$req_id" --argjson acts "$ADAPTER_ACTIONS" \
+          '[$acts[] | {action:"http",label:.label,url:$url,method:"POST",body:(.payload + "|" + $req)}]')
+      else
+        actions_json=$(jq -nc --arg url "$_resp_url" --arg req "$req_id" \
+          '[{action:"http",label:"Allow",url:$url,method:"POST",body:("allow|" + $req)},
+            {action:"http",label:"Deny",url:$url,method:"POST",body:("deny|" + $req)},
+            {action:"http",label:"Retry",url:$url,method:"POST",body:("retry|" + $req)}]')
+      fi
       ntfy_resp=$(curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
         -d "$(jq -nc \
           --arg topic "$TOPIC" \
           --arg title "[$SESSION_LABEL] $TOOL_NAME" \
           --arg message "$NOTIFY_MSG" \
-          --arg url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
+          --argjson actions "$actions_json" \
           '{topic:$topic,title:$title,message:$message,priority:4,tags:["lock"],
-            actions:[
-              {action:"http",label:"Allow",url:$url,method:"POST",body:"allow|'"$req_id"'"},
-              {action:"http",label:"Deny", url:$url,method:"POST",body:"deny|'"$req_id"'"},
-              {action:"http",label:"Retry",url:$url,method:"POST",body:"retry|'"$req_id"'"}
-            ]}')" "${NTFY_SERVER}/" 2>&1)
+            actions:$actions}')" "${NTFY_SERVER}/" 2>&1)
       response_id=$(jq -r '.id // "NO_ID"' <<<"$ntfy_resp" 2>/dev/null)
       log "notification sent, response id: $response_id"
 
@@ -329,9 +457,27 @@ core_main() {
           MSG=$(echo "$msg" | jq -r '.message // empty' 2>/dev/null)
           [ -n "$msg_id" ] && since_id="$msg_id"
           if [[ "$MSG" == *"|${req_id}" ]]; then
-            DECISION="${MSG%%|*}"
+            # strip the trailing "|<req_id>"; leaves "allow"/"deny"/"retry"
+            # or "answer|<label>" for question-option taps
+            DECISION="${MSG%\|"${req_id}"}"
             log "background: phone response: $DECISION"
             return 0
+          fi
+          # Typed option reply ("4" or "D") on the response topic: map through
+          # the question's label list. Single character, single-select only —
+          # ADAPTER_OPTIONS is unset for permissions and multi/stacked questions.
+          if [ -n "${ADAPTER_OPTIONS:-}" ] && [[ "$MSG" =~ ^[0-9A-Za-z]$ ]]; then
+            DECISION=$(jq -r --arg r "$MSG" '
+              def toidx($s): if ($s | test("^[0-9]$")) then ($s | tonumber - 1)
+                            elif ($s | test("^[a-zA-Z]$")) then (($s | ascii_downcase | explode[0]) - 97)
+                            else -1 end;
+              (toidx($r)) as $i | select($i >= 0) | (.[$i] // empty) as $l
+              | if $l == "" then empty else "answer|" + $l end' \
+              <<< "$ADAPTER_OPTIONS" 2>/dev/null)
+            if [ -n "$DECISION" ]; then
+              log "background: phone response: $DECISION (typed '$MSG')"
+              return 0
+            fi
           fi
         done <<< "$msgs"
       done
@@ -342,7 +488,9 @@ core_main() {
     current_req="${REQ_ID}"
     while true; do
       if send_notification "$current_req"; then
-        if [ "$DECISION" = "allow" ]; then
+        if [[ "$DECISION" == answer\|* ]]; then
+          adapter_inject "answer" "${DECISION#answer|}"; break
+        elif [ "$DECISION" = "allow" ]; then
           adapter_inject "allow" "Allow"; break
         elif [ "$DECISION" = "deny" ]; then
           adapter_inject "deny" "Deny"; break

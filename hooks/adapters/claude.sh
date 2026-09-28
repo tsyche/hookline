@@ -20,6 +20,13 @@ adapter_normalize() {
   CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
   TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
   SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+  # question flow state (build_question_message in core.sh fills the pieces it
+  # needs; permissions leave these empty → default trio, no typed options)
+  IS_QUESTION=""
+  ADAPTER_ACTIONS=""
+  ADAPTER_NO_ACTIONS=""
+  ADAPTER_OPTIONS=""
+  [ "$TOOL_NAME" = "AskUserQuestion" ] && IS_QUESTION=1
 }
 
 # Echo the Bash command ("" = not a Bash tool, or no command extractable).
@@ -84,9 +91,9 @@ adapter_build_message() {
     _path=$(echo "$INPUT" | jq -r '.tool_input.path // ""' 2>/dev/null)
     NOTIFY_MSG="NotebookEdit: $_path"
   elif [ "$TOOL_NAME" = "AskUserQuestion" ]; then
-    # Multi-option question — warn that Allow picks option 1 and Deny dismisses.
-    _q=$(echo "$INPUT" | jq -r '.tool_input.questions[0].question // .tool_input.questions[0].header // "multi-option question"' 2>/dev/null)
-    NOTIFY_MSG="⚠️ ${_q:0:230} — Allow picks option 1, Deny dismisses"
+    # question dialog — shared builder: body with numbered options, option
+    # buttons (≤3), typed-reply hint + ADAPTER_OPTIONS for 4+
+    build_question_message
   else
     NOTIFY_MSG="${TOOL_INPUT:0:300}"
   fi
@@ -104,11 +111,13 @@ adapter_progress_lines() {
   echo "${n:-0}"
 }
 
-# allow → type "1" + Enter (option 1 is always "Yes")
-# deny  → Escape (key code 53), which cancels the prompt regardless of how
-#         many options the menu has — "3" breaks on 2-option menus.
+# allow   → type "1" + Enter (option 1 is always "Yes")
+# deny    → Escape (key code 53), which cancels the prompt regardless of how
+#           many options the menu has — "3" breaks on 2-option menus.
+# answer  → question option: type the label's number + Enter (ADAPTER_OPTIONS
+#           carries the label list build_question_message extracted)
 adapter_inject() {
-  local action="$1"   # "allow" or "deny"
+  local action="$1"   # "allow", "deny", or "answer"
   local label="$2"
   local proc=""
   case "${TERM_PROGRAM:-}" in
@@ -117,7 +126,26 @@ adapter_inject() {
     WezTerm)        proc="WezTerm" ;;
   esac
   log "background: injecting '$action' ($label) via ${TERM_PROGRAM:-frontmost}"
-  if [ "$action" = "deny" ]; then
+  if [ "$action" = "answer" ]; then
+    local idx
+    idx=$(echo "${ADAPTER_OPTIONS:-[]}" | jq -r --arg l "$label" \
+      'index($l) // -1 | . + 1' 2>/dev/null)
+    if [ -z "$idx" ] || [ "$idx" -le 0 ] 2>/dev/null; then
+      log "background: answer label '$label' not in option list, ignoring"
+      return 0
+    fi
+    if [ -n "$proc" ]; then
+      osascript \
+        -e "tell application \"System Events\" to tell process \"$proc\" to keystroke \"$idx\"" \
+        -e "tell application \"System Events\" to tell process \"$proc\" to key code 36" \
+        2>/dev/null
+    else
+      osascript \
+        -e "tell application \"System Events\" to keystroke \"$idx\"" \
+        -e "tell application \"System Events\" to key code 36" \
+        2>/dev/null
+    fi
+  elif [ "$action" = "deny" ]; then
     if [ -n "$proc" ]; then
       osascript -e "tell application \"System Events\" to tell process \"$proc\" to key code 53" 2>/dev/null
     else
