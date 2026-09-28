@@ -8,6 +8,9 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ### Added
 
+- `hookline setup` — guided setup wizard: transport choice (ntfy.sh public default · self-hosted URL/auth + ready `docker-compose.yml` · direct/Tailscale shown as not-yet-available), topic keep/generate/validate, subscribe QR via `qrencode` (URL always printed), tmux detect with install offer and no-tmux injection warning, and a live test notification on every path; idempotent config writes, daemon restart only when config actually changed
+- `just check-gates` — one command runs every gate CI runs; `ci.yml` now calls the recipe instead of listing steps, so local and CI gate lists can't drift
+- `just test-plugin` + `tests/test_plugin.mjs` — 8 `node --test` cases for the opencode plugin (spawn payload/env plumbing, local-answer counter, bridge reply paths, dispose), the last adapter layer with zero coverage
 - opencode question-dialog notifications: `question.asked` (and `question.v2.asked`) now ride the same grace-period phone flow as permissions; single single-select questions with 1–3 options answer from ntfy buttons via `client.question.reply`, everything else is notify-only (ntfy's 3-button cap); `question.replied`/`rejected` feed the local-answer signal
 - typed option replies: single-select questions ship their full label list in the notify payload and the body prompts for it — reply with an option's number (`4`) or letter (`D`) on the response topic to answer, which makes 4+ option questions answerable from the phone despite the 3-button cap
 - claude/blackbox AskUserQuestion parity: question dialogs ride the shared `build_question_message` body/buttons/typed-reply flow; the daemon answers via tmux option-number injection (bare terminals get osascript keystrokes through the response file)
@@ -17,6 +20,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ### Fixed
 
+- reinstall no longer overwrites `~/.config/hookline/config` — topic, self-hosted server/auth, and extended-window settings set by `hookline setup` survive `bash install.sh`
+- opencode plugin's reply-socket listen error now rejects instead of resolving never (an unreachable bind path previously hung plugin load silently)
 - opencode question replies use a v2 SDK client built over the injected client's own transport (in-process fetch); the injected client is the v1 surface with no `question` API, so replies previously died with `TypeError: undefined is not an object`
 - notify-only notifications (4+ option, multi-select, stacked questions) no longer arrive with the default Allow/Deny/Retry buttons — an explicit `no_actions` flag distinguishes them from permissions, which keep the trio
 

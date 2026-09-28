@@ -54,6 +54,15 @@ golden:
 test-daemon:
     /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
 
+# Unit tests for the opencode plugin (node --test, sandboxed fake HOME)
+test-plugin:
+    @command -v node >/dev/null || { echo "node not installed — run: brew install node"; exit 1; }
+    node --test tests/test_plugin.mjs
+
+# Run every gate CI runs — the single source of truth for local + CI checks
+check-gates: lint golden test-daemon test-plugin doctor-test status-test install-test release-smoke-test check-docs
+    @echo "all gates passed"
+
 # Sandboxed checks for `hookline doctor` (fake HOME, no network, no launchd)
 doctor-test:
     bash scripts/doctor-test.sh

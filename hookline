@@ -28,6 +28,7 @@ usage: hookline <command>
 Commands:
   status          Show config, hook registration, daemon status, connectivity
   doctor          Diagnose the whole notification chain; fix what it can
+  setup           Guided setup: transport, topic + QR, tmux check, live test
   topic [name]    Show current topic, or switch to a new one and restart daemon
   daemon start    Start the hookline daemon (registers with launchd)
   daemon stop     Stop the daemon
@@ -89,6 +90,264 @@ cmd_topic() {
 
   echo
   echo "→ Subscribe to '${new_topic}' (and '${new_topic}-response') in the ntfy app."
+}
+
+# ── setup wizard ──────────────────────────────────────────────────────────────
+
+# Idempotent config writer: replace KEY= line or append. Value must include
+# its own quotes when it's a string (matches how the config is written).
+set_config() {
+  local key="$1" val="$2"
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  touch "$CONFIG_FILE"
+  if grep -q "^${key}=" "$CONFIG_FILE"; then
+    sed -i '' "s|^${key}=.*|${key}=${val}|" "$CONFIG_FILE"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$CONFIG_FILE"
+  fi
+}
+
+# ntfy.sh-style topic-safe random name ([-_A-Za-z0-9])
+generate_topic() {
+  echo "hookline-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12)"
+}
+
+# Show a scannable QR for subscribing (falls back to the bare URL).
+show_subscribe_qr() {
+  local url="$1"
+  if command -v qrencode >/dev/null 2>&1; then
+    echo
+    qrencode -t ANSIUTF8 "$url" 2>/dev/null || true
+    echo
+    echo "  (scan with your phone camera, or open the URL below)"
+  fi
+  echo "  $url"
+}
+
+# Send one live test notification on the configured topic; ask the user to
+# confirm it landed. Returns non-zero when the publish itself failed.
+send_test_notification() {
+  local _server="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+  local _topic="${HOOKLINE_TOPIC:-}"
+  if [ -z "$_topic" ]; then
+    echo "  no topic configured — skipping test notification"
+    return 1
+  fi
+  local _auth=()
+  [ -n "${HOOKLINE_NTFY_USERNAME:-}" ] && _auth=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
+  local id
+  id=$(curl -s "${_auth[@]}" -H "Content-Type: application/json" \
+    -d "$(jq -nc --arg topic "$_topic" \
+      '{topic:$topic,title:"[hookline] Setup test",message:"hookline setup works — you should see this on your phone.",priority:4,tags:["white_check_mark"]}')" \
+    "${_server}/" | jq -r '.id // empty')
+  if [ -n "$id" ]; then
+    echo "  notification sent (id=$id) ✓"
+    echo -n "  did it arrive on your phone? [Y/n] "
+    local ans=""
+    read -r ans
+    case "$ans" in
+      [Nn]*) echo "  run 'hookline doctor' to diagnose the chain"; return 1 ;;
+    esac
+    return 0
+  fi
+  echo "  FAILED to publish to ${_server} — check HOOKLINE_NTFY_SERVER / auth"
+  return 1
+}
+
+# tmux presence + activity, with install offer. Never fatal.
+setup_tmux_step() {
+  echo
+  echo "── tmux"
+  local tmux_bin=""
+  tmux_bin=$(command -v tmux 2>/dev/null || true)
+  [ -z "$tmux_bin" ] && [ -x /opt/homebrew/bin/tmux ] && tmux_bin=/opt/homebrew/bin/tmux
+  [ -z "$tmux_bin" ] && [ -x /usr/local/bin/tmux ] && tmux_bin=/usr/local/bin/tmux
+
+  if [ -z "$tmux_bin" ]; then
+    echo "  not installed — phone answers would inject into the frontmost window"
+    echo "  only. That's fine for a single terminal window; concurrent sessions in"
+    echo "  separate tabs/splits won't both get focus-independent injection."
+    if command -v brew >/dev/null 2>&1; then
+      echo -n "  install tmux now? [y/N] "
+      local ans=""
+      read -r ans
+      case "$ans" in
+        [Yy]*)
+          brew install tmux && echo "  tmux installed ✓"
+          ;;
+      esac
+    else
+      echo "  install it with your package manager for full multi-session support"
+    fi
+    return 0
+  fi
+
+  echo "  installed: $tmux_bin"
+  if [ -n "${TMUX:-}" ]; then
+    echo "  active ✓ (this shell is inside tmux)"
+  elif tmux ls >/dev/null 2>&1; then
+    echo "  active ✓ ($(tmux ls 2>/dev/null | wc -l | tr -d ' ') session(s) running)"
+  else
+    echo "  installed, no sessions running — run agents inside tmux for"
+    echo "  focus-independent injection across multiple sessions"
+  fi
+}
+
+cmd_setup() {
+  echo "=== hookline setup wizard ==="
+
+  if [ ! -f "$HOOK_DST" ]; then
+    echo "hookline isn't installed yet — run 'bash install.sh' in the repo first,"
+    echo "then re-run 'hookline setup'."
+    return 1
+  fi
+
+  # load current config (values become the defaults for every prompt)
+  local prev_server="" prev_topic=""
+  if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE" 2>/dev/null
+    prev_server="${HOOKLINE_NTFY_SERVER:-}"
+    prev_topic="${HOOKLINE_TOPIC:-}"
+  fi
+  local changed=0
+
+  echo
+  echo "── Transport (where notifications go)"
+  echo "  1) ntfy.sh public — default, zero config"
+  echo "  2) self-hosted ntfy server"
+  echo "  3) direct / Tailscale — not yet available (roadmap Phase 9)"
+  echo -n "Choice [1]: "
+  local choice=""
+  read -r choice
+  choice="${choice:-1}"
+  case "$choice" in
+    1)
+      # clear any self-hosted auth left over from a previous run
+      if [ -n "${HOOKLINE_NTFY_USERNAME:-}" ] || grep -q '^HOOKLINE_NTFY_USERNAME=' "$CONFIG_FILE" 2>/dev/null; then
+        sed -i '' '/^HOOKLINE_NTFY_USERNAME=/d;/^HOOKLINE_NTFY_PASSWORD=/d' "$CONFIG_FILE"
+        changed=1
+      fi
+      if [ "$prev_server" != "https://ntfy.sh" ]; then
+        changed=1
+      fi
+      set_config HOOKLINE_NTFY_SERVER '"https://ntfy.sh"'
+      HOOKLINE_NTFY_SERVER="https://ntfy.sh"
+      unset HOOKLINE_NTFY_USERNAME HOOKLINE_NTFY_PASSWORD
+      ;;
+    2)
+      local server user pass
+      echo -n "  server URL [${HOOKLINE_NTFY_SERVER:-https://ntfy.example.com}]: "
+      read -r server
+      server="${server:-${HOOKLINE_NTFY_SERVER:-https://ntfy.example.com}}"
+      echo -n "  username (blank for none): "
+      read -r user
+      echo -n "  password (blank for none): "
+      read -r pass
+      if [ "$server" != "$prev_server" ] || [ -n "$user" ]; then
+        changed=1
+      fi
+      set_config HOOKLINE_NTFY_SERVER "\"${server}\""
+      if [ -n "$user" ]; then
+        set_config HOOKLINE_NTFY_USERNAME "\"${user}\""
+        set_config HOOKLINE_NTFY_PASSWORD "\"${pass}\""
+      else
+        sed -i '' '/^HOOKLINE_NTFY_USERNAME=/d;/^HOOKLINE_NTFY_PASSWORD=/d' "$CONFIG_FILE" 2>/dev/null || true
+      fi
+      HOOKLINE_NTFY_SERVER="$server"
+      changed=1
+
+      local compose="${HOME}/.config/hookline/docker-compose.yml"
+      cat > "$compose" <<'YML'
+services:
+  ntfy:
+    image: binwiederhier/ntfy
+    container_name: ntfy
+    command: ["serve"]
+    ports:
+      - "80:80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    restart: unless-stopped
+
+volumes:
+  ntfy-cache:
+YML
+      echo "  docker-compose.yml written to $compose"
+      echo "  start it with:  docker compose -f $compose up -d"
+      echo "  (enable auth on the server via server.yml — see ntfy docs)"
+      ;;
+    3)
+      echo "  direct/Tailscale mode isn't built yet — pick 1 or 2."
+      return 1
+      ;;
+    *)
+      echo "invalid choice '$choice'"
+      return 1
+      ;;
+  esac
+
+  # ── topic ──
+  echo
+  echo "── Topic"
+  echo "  current: ${HOOKLINE_TOPIC:-"(not set)"}"
+  echo -n "  new topic (Enter keeps current, 'g' generates): "
+  local topic=""
+  read -r topic
+  case "$topic" in
+    "") ;;   # keep
+    g|G)
+      topic=$(generate_topic)
+      set_config HOOKLINE_TOPIC "\"$topic\""
+      HOOKLINE_TOPIC="$topic"
+      changed=1
+      ;;
+    *)
+      if ! [[ "$topic" =~ ^[-_A-Za-z0-9]+$ ]]; then
+        echo "  invalid topic '$topic' — use only letters, numbers, '-' and '_'"
+        return 1
+      fi
+      if [ "$topic" != "$prev_topic" ]; then
+        changed=1
+      fi
+      set_config HOOKLINE_TOPIC "\"$topic\""
+      HOOKLINE_TOPIC="$topic"
+      ;;
+  esac
+  if [ -z "${HOOKLINE_TOPIC:-}" ]; then
+    HOOKLINE_TOPIC=$(generate_topic)
+    set_config HOOKLINE_TOPIC "\"$HOOKLINE_TOPIC\""
+    changed=1
+    echo "  generated: $HOOKLINE_TOPIC"
+  fi
+
+  # ── subscribe (QR) ──
+  echo
+  echo "── Phone subscription"
+  echo "  Subscribe to these two topics in the ntfy app:"
+  echo "    $HOOKLINE_TOPIC          (notifications)"
+  echo "    $HOOKLINE_TOPIC-response (button taps + typed replies)"
+  show_subscribe_qr "${HOOKLINE_NTFY_SERVER%/}/$HOOKLINE_TOPIC"
+
+  setup_tmux_step
+
+  # ── apply + verify ──
+  chmod 600 "$CONFIG_FILE" 2>/dev/null || true
+  if [ "$changed" = 1 ] && daemon_running; then
+    echo
+    echo "── Config changed — restarting daemon"
+    cmd_daemon restart >/dev/null 2>&1 && echo "  daemon restarted ✓" || echo "  daemon restart failed — run: hookline daemon restart"
+  fi
+
+  echo
+  echo "── Live test"
+  local rc
+  send_test_notification
+  rc=$?
+
+  echo
+  echo "Setup complete. Run 'hookline status' any time to check the chain."
+  return $rc
 }
 
 # ── daemon helpers ─────────────────────────────────────────────────────────────
@@ -527,6 +786,7 @@ cmd_doctor() {
 case "${1:-help}" in
   status)         cmd_status ;;
   doctor)         cmd_doctor ;;
+  setup)          cmd_setup ;;
   topic)          shift; cmd_topic "$@" ;;
   daemon)         shift; cmd_daemon "$@" ;;
   enable)         cmd_enable ;;

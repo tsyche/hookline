@@ -167,3 +167,33 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
     - `ask` forces grok's permission prompt even when policy would auto-approve — the Flow A seam exists without codex's decline trick
     - Watch-outs: default hook timeout is 5s (must set `timeout` ≥ grace period); approval-menu key profile (Enter/Esc?) unverified
     - Next: grok adapter (~3–4h: adapter + `~/.grok/hooks` registration + live E2E of prompt keys)
+
+11. **`check-gates` recipe** — done 2026-09-28
+    - `just check-gates` runs every gate CI runs (`lint`, `golden`, `test-daemon`, `test-plugin`,
+      `doctor-test`, `status-test`, `install-test`, `release-smoke-test`, `check-docs`); `ci.yml`
+      is a single `just check-gates` call, so local and CI gate lists cannot drift
+    - Acceptance met: recipe green locally, CI reduced to the one call
+
+12. **opencode plugin tests** — done 2026-09-28
+    - `tests/test_plugin.mjs` — 8 `node --test` cases with a fake SDK client and a fake hook
+      script: spawn on `permission.asked`/`question.asked` (payload + reply-sock env captured
+      from stdin/stdout), counter appends (`permission.replied`/`question.rejected`), bridge
+      reply paths (permission / question reply / question-reject), dispose closes the socket
+    - Pitfalls encoded as comments: reply socket needs a short `/tmp` unix path (macOS
+      `sun_path` ≤104 — long `/var/folders` sandbox dirs fail `listen EINVAL` and the plugin's
+      listen promise now rejects instead of hanging); counter lines are *empty* lines counted
+      by newline (the adapter's `wc -l` signal), not non-empty entries; capture waits for the
+      final line to avoid racing the fake hook's writes
+    - `package.json` adds `{"type":"module"}` so the plugin imports as ESM; `just test-plugin`
+      joins `check-gates`
+
+13. **Setup wizard** — done 2026-09-28
+    - `hookline setup`: transport tiers (ntfy.sh default with leftover-auth cleanup ·
+      self-hosted prompt for URL/auth + `binwiederhier/ntfy` `docker-compose.yml` written to
+      `~/.config/hookline/docker-compose.yml` · direct/Tailscale shown as not-yet-available),
+      topic keep/generate/validate (`[-_A-Za-z0-9]`), subscribe-URL QR via `qrencode` (URL
+      always printed), tmux detect with `brew install` offer + no-tmux injection warning,
+      live test notification (exit 1 when the publish fails), idempotent `set_config`,
+      daemon restart only on real config change
+    - `install.sh` now preserves existing config (topic, self-hosted server/auth, extended
+      window) instead of overwriting — reinstalls keep wizard-set values

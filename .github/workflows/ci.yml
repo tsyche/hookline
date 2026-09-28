@@ -17,11 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
-      - run: just lint
-      - run: just golden
-      - run: just test-daemon
-      - run: just doctor-test
-      - run: just status-test
-      - run: just install-test
-      - run: just release-smoke-test
-      - run: just check-docs
+      # Single source of truth: every gate lives in the check-gates recipe,
+      # so the local command and the CI list can never drift.
+      - run: just check-gates

@@ -154,11 +154,14 @@ HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
 HOOKLINE_PROVIDERS="claude opencode"    # provider registry; unset = all enabled
 ```
 
-Changes take effect immediately — no reinstall needed.
+Changes take effect immediately — no reinstall needed. `hookline setup` walks through
+all of it (transport, topic, subscription QR, tmux check, live test) without editing
+files by hand.
 
 ## CLI
 
 ```bash
+hookline setup              # guided setup: transport, topic + QR, tmux check, live test
 hookline status               # config, daemon status (heartbeat/SSE ages), connectivity, recent log
 hookline doctor               # diagnose the whole chain; fixes a dead/hung daemon
 hookline topic                # show the current ntfy topic
@@ -177,8 +180,11 @@ hung daemon automatically.
 ## Test
 
 ```bash
+just check-gates  # every gate CI runs, in one command (the single source of truth)
+just lint         # shellcheck the shell scripts + py_compile the Python files
 just golden         # hook stdout contract tests (sandboxed, no network)
 just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
+just test-plugin    # opencode plugin unit tests (node --test)
 just doctor-test    # sandboxed `hookline doctor` report tests
 just status-test    # sandboxed `hookline status` report tests
 just install-test   # sandboxed install/uninstall round-trip tests
@@ -187,7 +193,8 @@ bash scripts/test.sh
 ```
 
 `scripts/test.sh` sends a test notification with Allow/Deny buttons and reports
-the response; the other six run offline and also gate CI. `just release-smoke`
+the response; the others run offline and also gate CI (`ci.yml` runs exactly
+`just check-gates`). `just release-smoke`
 asserts the latest GitHub release tag matches `VERSION` (needs gh auth) and
 runs in CI right after every release.
 

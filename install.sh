@@ -59,13 +59,23 @@ if [ -z "$HOOKLINE_TOPIC" ]; then
   HOOKLINE_TOPIC="$topic"
 fi
 
-# Write config
+# Write config. Reinstaller preserves existing values (topic, self-hosted
+# server/auth, extended window) — only fills defaults for what's unset.
 cat > "$CONFIG_FILE" <<EOF
 HOOKLINE_TOPIC="${HOOKLINE_TOPIC}"
-HOOKLINE_NTFY_SERVER="https://ntfy.sh"
-HOOKLINE_GRACE_PERIOD=20
-HOOKLINE_PHONE_TIMEOUT=900
+HOOKLINE_NTFY_SERVER="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
+HOOKLINE_GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
+HOOKLINE_PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
 EOF
+if [ -n "${HOOKLINE_NTFY_USERNAME:-}" ]; then
+  printf 'HOOKLINE_NTFY_USERNAME="%s"\n' "$HOOKLINE_NTFY_USERNAME" >> "$CONFIG_FILE"
+fi
+if [ -n "${HOOKLINE_NTFY_PASSWORD:-}" ]; then
+  printf 'HOOKLINE_NTFY_PASSWORD="%s"\n' "$HOOKLINE_NTFY_PASSWORD" >> "$CONFIG_FILE"
+fi
+if [ -n "${HOOKLINE_EXTENDED_WAIT:-}" ]; then
+  printf 'HOOKLINE_EXTENDED_WAIT=%s\n' "$HOOKLINE_EXTENDED_WAIT" >> "$CONFIG_FILE"
+fi
 # Preserve an existing provider registry across reinstalls (Phase 3 rewrites
 # this deliberately; a plain reinstall must not silently enable everything).
 if [ -n "${HOOKLINE_PROVIDERS:-}" ]; then

@@ -41,22 +41,27 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   (SSE connect/receive, bounded by a 300s read timeout); `daemon/watchdog.py` is a
   launchd `StartInterval` job that restarts the daemon when either goes stale — KeepAlive
   only catches processes that exit.
-- **CLI** (`hookline`) — Bash. `status`, `doctor`, `topic`, `daemon start/stop/restart/status`.
+- **CLI** (`hookline`) — Bash. `setup`, `status`, `doctor`, `topic`, `daemon start/stop/restart/status`.
 - **Install/uninstall** (`install.sh`, `uninstall.sh`), **tests** (`scripts/test.sh`,
   `scripts/hook-golden.sh` — sandboxed stdout contract tests, no network;
-  `tests/test_daemon.py` — daemon unit tests; `scripts/doctor-test.sh` — sandboxed
-  doctor report tests; `scripts/status-test.sh` — sandboxed status report tests;
+  `tests/test_daemon.py` — daemon unit tests; `tests/test_plugin.mjs` — opencode plugin
+  unit tests; `scripts/doctor-test.sh` — sandboxed doctor report tests;
+  `scripts/status-test.sh` — sandboxed status report tests;
   `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
   `scripts/release-smoke-test.sh` — sandboxed release smoke check tests).
   Install/uninstall honor `HOOKLINE_SANDBOX=1` (no launchctl, no `/usr/local/bin`).
+  `just check-gates` runs every gate CI runs (`ci.yml` calls it — keep both in sync
+  via the recipe, never by listing steps twice).
 
 ## Key commands
 
 ```bash
 just install        # install hook, daemon, CLI, launchd registration
 just test           # send a test notification
+just check-gates    # every gate CI runs, in one command (single source of truth)
 just golden         # hook stdout contract tests (sandboxed, no network)
 just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
+just test-plugin    # opencode plugin unit tests (node --test, fake SDK client)
 just doctor-test    # sandboxed `hookline doctor` report tests (no network, no launchd)
 just status-test    # sandboxed `hookline status` report tests (no network, no launchd)
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd)

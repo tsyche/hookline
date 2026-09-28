@@ -120,8 +120,11 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
       }
     });
   });
-  await new Promise((resolve) => {
-    replyServer.once("error", (e) => logLine(`reply sock error: ${e}`));
+  await new Promise((resolve, reject) => {
+    replyServer.once("error", (e) => {
+      logLine(`reply sock error: ${e}`);
+      reject(e); // fail loudly — an unresolved promise would hang plugin load
+    });
     replyServer.listen(REPLY_SOCK, resolve);
   });
   logLine(`loaded serverUrl=${String(serverUrl)} sock=${REPLY_SOCK} cwd=${directory}`);

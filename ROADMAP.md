@@ -51,9 +51,12 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **`check-gates` recipe** — one local command mirrors every CI gate so the lists can't drift (~0.3h)
-2. **opencode plugin tests** — the live-used opencode adapter is the only layer with zero test coverage (~1–2h)
-3. **Setup wizard** — flagship Phase 6 item; makes the 5-minute install goal real for every transport tier (~2–3h)
+1. **Pattern management CLI** (~2–3h) — `hookline patterns` / `remove-pattern` / `clear-patterns`
+2. **CONTRIBUTING.md** (~1–2h) — adapters, backend, testing, PR process
+3. **In-repo git hooks** (~1h) — vendor `.githooks/` so fresh clones get `check-docs` locally
+
+> Previous recommended 3 (`check-gates`, opencode plugin tests, setup wizard) all shipped
+> 2026-09-28 — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
 ## Phase 5 — Reliability & self-healing (complete)
 
@@ -64,42 +67,27 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Phase 6 — Onboarding & contributors (next)
 
-1. **Setup wizard** (~2–3h)
-   - `hookline setup` replaces manual config editing with a guided walkthrough anyone can follow
-   - Asks: which transport? ntfy.sh public (default, zero config) → self-hosted ntfy → direct/Tailscale (daemon HTTP server)
-   - For ntfy.sh: generate or enter topic, print QR code for phone subscription (requires `qrencode`)
-   - For self-hosted ntfy: prompt for server URL + auth credentials; output a ready-to-use `docker-compose.yml`
-   - Detects whether tmux is installed and active; recommends it for full multi-session support; offers `brew install tmux` if missing
-   - If not using tmux, warns that keystroke injection only works reliably in a single terminal window — concurrent Claude sessions in separate tabs/splits won't both get focus-independent injection
-   - All paths end with a live test notification so user knows it works before they walk away
-   - Reruns cleanly to switch transports later
-   - 🧑 needs-human: QR scan, phone subscription, and the live test-notification check happen on the device
-
-2. **Pattern management CLI** (~2–3h)
+1. **Pattern management CLI** (~2–3h)
    - `hookline patterns` — list current allowlist
    - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
    - `hookline clear-patterns` — wipe project allowlist
 
-3. **CONTRIBUTING.md** (~1–2h)
+2. **CONTRIBUTING.md** (~1–2h)
    - How to add a notification backend, how to add a provider adapter, how to test the hook locally (`just lint && just golden && just check-docs`), PR process
    - CI half of the original item is done: lint + golden + check-docs run on push/PR; Dependabot grouped monthly for `github-actions`
 
-4. **In-repo git hooks** (~1h)
+3. **In-repo git hooks** (~1h)
    - The `check-docs` pre-commit hook currently runs from machine-local `~/.git-hooks` via a global `core.hooksPath` — contributors (and any fresh clone) never get it
    - Vendor `.githooks/` in the repo plus a `hooks` recipe (and a CONTRIBUTING line); CI already gates the same checks, this closes the local-feedback gap
 
-5. **`check-gates` recipe** (~0.3h)
-   - One recipe running every gate CI runs (`lint`, `golden`, `test-daemon`, `doctor-test`, `status-test`, `install-test`, `release-smoke-test`, `check-docs`); `ci.yml` calls the recipe instead of listing steps, so local and CI gate lists cannot drift
-   - Acceptance: the recipe runs green locally; CI workflow reduced to the single recipe call
-
-6. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
+4. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
    [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md)); not approved/built
    - Claude-compatible `PreToolUse` hooks in `~/.grok/hooks/*.json` (always-trusted), stdout
      decisions `allow|deny|ask|defer`; `ask` forces grok's prompt — the Flow A seam without
      codex's decline trick
    - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
 
-7. **Question-dialog phone flow (opencode + claude/blackbox)** — implemented 2026-09-27/28, pending commit/release
+5. **Question-dialog phone flow (opencode + claude/blackbox)** — committed `ed47d64` 2026-09-28, pending release
    - Gap closed: plugin hooks `question.asked`/`question.v2.asked` (spawns the hook) and
      `question.replied`/`rejected` (local-answer counter) — question dialogs get the same
      20s grace + phone notification as permission prompts; claude AskUserQuestion rides the
@@ -120,30 +108,23 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
      cancels the pending entry
    - Tests: 10 new golden cases (37 total) + 19 new daemon tests (49 total)
 
-8. **opencode plugin tests** (~1–2h)
-   - `hooks/plugins/hookline.js` is the only adapter layer with zero automated coverage —
-     the shell hook has 37 golden cases, the Python daemon has 49 unit tests, the Node plugin has none
-   - `node --test` with a fake `permission.asked` event → assert spawn of `hookline.sh opencode`,
-     payload plumbing, and the bridge reply path
-   - Acceptance: a `test-plugin` recipe runs green locally and joins CI alongside the other gates
-
-9. **One-line install** (~1–2h)
+6. **One-line install** (~1–2h)
    - README install is `git clone` + `just install`; a `curl -fsSL … | bash` path from a pinned
      GitHub release shortens the 5-minute install goal (release tarball or raw-GitHub fetch —
      `install.sh` today assumes repo-relative files)
    - Acceptance: fresh machine install with no git checkout of the repo
 
-10. **Version / upgrade check** (~0.5–1h)
+7. **Version / upgrade check** (~0.5–1h)
     - `hookline status` (and/or `doctor`) flags when the latest GitHub release tag is newer than
       the installed `VERSION` — release-smoke already fetches the latest tag, reuse that
     - Acceptance: outdated install reports the newer tag; up-to-date install stays quiet
 
-11. **Internal link check** (~0.5h)
+8. **Internal link check** (~0.5h)
     - Extend `check-docs` to verify relative markdown links (ROADMAP → ledger, README → ROADMAP, …)
       so cross-doc references can't rot silently
     - Acceptance: a deliberately broken relative link fails `just check-docs`
 
-12. **Long question lists — chunked/compressed bodies** (~1–2h)
+9. **Long question lists — chunked/compressed bodies** (~1–2h)
     - Today the notification body truncates at 1500 chars, so a question with a long option
       list (or verbose descriptions) can lose options at the tail — typing still resolves
       any number, but the reader can't see what they're picking
@@ -153,7 +134,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
     - Acceptance: a 30-option question with descriptions arrives fully visible and answerable
       by number
 
-13. **`context` keyword — side-thread assessed summary** (~2–4h)
+10. **`context` keyword — side-thread assessed summary** (~2–4h)
     - Type `context` while a question/permission is pending → a short assessed summary of
       where the conversation stands (not just raw lines) arrives as a new notification; the
       original prompt stays pending and is answered afterwards as usual
