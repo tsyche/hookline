@@ -6,6 +6,10 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- `hookline status` version check — compares the installed version (recorded by `install.sh` as `~/.local/share/hookline/VERSION`) against the latest GitHub release tag and flags the upgrade; degrades quietly when the endpoint is unreachable, and `HOOKLINE_LATEST_RELEASE_URL` overrides the endpoint so tests stay offline
+
 ## [1.7.1] - 2026-09-29
 
 ### Fixed

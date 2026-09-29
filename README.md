@@ -162,7 +162,7 @@ files by hand.
 
 ```bash
 hookline setup              # guided setup: transport, topic + QR, tmux check, live test
-hookline status               # config, daemon status (heartbeat/SSE ages), connectivity, recent log
+hookline status               # version check (latest GitHub release), config, daemon status (heartbeat/SSE ages), connectivity, recent log
 hookline doctor               # diagnose the whole chain; fixes a dead/hung daemon
 hookline topic                # show the current ntfy topic
 hookline topic <name>         # switch topic, update config, restart daemon

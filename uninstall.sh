@@ -43,6 +43,7 @@ if [ -f "$WATCHDOG_PLIST" ]; then
   echo "Removed watchdog launchd job"
 fi
 rm -f "${HOME}/.local/share/hookline/watchdog.py"
+rm -f "${HOME}/.local/share/hookline/VERSION"
 
 # Remove the CLI (sandbox mode never touches /usr/local/bin)
 if [ "${HOOKLINE_SANDBOX:-0}" != "1" ] && { [ -f /usr/local/bin/hookline ] || [ -L /usr/local/bin/hookline ]; }; then

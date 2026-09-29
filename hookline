@@ -14,6 +14,7 @@ WATCHDOG_PLIST_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 DISABLED_FLAG="${HOME}/.config/hookline/disabled"
+VERSION_FILE="${HOME}/.local/share/hookline/VERSION"
 
 # Asdf-proof Python — a bare `python3` resolves to an asdf shim in directories
 # with a .tool-versions pointing at an uninstalled version, which makes the
@@ -610,8 +611,40 @@ cmd_daemon() {
 
 # ── status ─────────────────────────────────────────────────────────────────────
 
+# Latest release tag ("vX.Y.Z" → "X.Y.Z"), empty on any failure. The endpoint
+# is overridable so status-test stays offline; curl+gh-free (curl is already a
+# hard dependency of the installer, gh is not).
+latest_release_tag() {
+  local url="${HOOKLINE_LATEST_RELEASE_URL:-https://api.github.com/repos/tsyche/hookline/releases/latest}"
+  curl -fsS --max-time 5 -H "Accept: application/vnd.github+json" "$url" 2>/dev/null \
+    | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//'
+}
+
+# version_lt <a> <b> — true when dotted-numeric a < b (non-numeric → false).
+version_lt() {
+  [ "$1" != "$2" ] || return 1
+  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$1" ]
+}
+
 cmd_status() {
   echo "=== hookline status ==="
+  echo
+
+  echo "── Version"
+  installed_version=""
+  [ -f "$VERSION_FILE" ] && installed_version=$(tr -d '[:space:]' < "$VERSION_FILE")
+  if [ -z "$installed_version" ]; then
+    echo "  unknown (no VERSION file — run install.sh)"
+  else
+    latest=$(latest_release_tag)
+    if [ -z "$latest" ]; then
+      echo "  $installed_version (update check unavailable)"
+    elif version_lt "$installed_version" "$latest"; then
+      echo "  $installed_version → update available: $latest  (bash install.sh from a fresh clone)"
+    else
+      echo "  $installed_version ✓"
+    fi
+  fi
   echo
 
   echo "── Enabled"

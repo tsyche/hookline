@@ -133,6 +133,11 @@ run_case() {
 
 [ -f "$CLI" ] || { echo "CLI not found: $CLI"; exit 1; }
 
+# Version-check endpoint: default to an unreachable local URL so the suite
+# never touches the network (the Version section then reports "unavailable").
+# Version cases below re-export it at a local server serving release JSON.
+export HOOKLINE_LATEST_RELEASE_URL="http://127.0.0.1:9/latest.json"
+
 # ── 1. live daemon with heartbeat build → ages shown, rc=0 ──
 h=$(new_home "http://127.0.0.1:9")
 port=$(start_http_server "$h") || exit 1
@@ -155,6 +160,40 @@ run_case "old-daemon-build" "$h" 0 \
 h=$(new_home "http://127.0.0.1:${port}")
 run_case "daemon-down" "$h" 0 \
   "NOT running (installed, not started"
+
+# ── 4. outdated install → newer tag flagged, rc=0 ──
+rel_dir=$(mktemp -d /tmp/hookline-rel.XXXXXX)
+CLEANUP_DIRS+=("$rel_dir")
+printf '{"tag_name":"v9.9.9"}' > "$rel_dir/latest.json"
+rel_port=$(start_http_server "$rel_dir") || exit 1
+export HOOKLINE_LATEST_RELEASE_URL="http://127.0.0.1:${rel_port}/latest.json"
+h=$(new_home "http://127.0.0.1:${port}")
+echo "1.0.0" > "$h/.local/share/hookline/VERSION"
+run_case "version-outdated" "$h" 0 \
+  "1.0.0 → update available: 9.9.9"
+
+# ── 5. up-to-date install → quiet checkmark, no update line, rc=0 ──
+h=$(new_home "http://127.0.0.1:${port}")
+echo "9.9.9" > "$h/.local/share/hookline/VERSION"
+out=$(HOME="$h" bash "$CLI" status 2>&1); rc=$?
+ok=1
+case "$out" in *"9.9.9 ✓"*) ;; *) ok=0; echo "  missing pattern: 9.9.9 ✓" ;; esac
+case "$out" in *"update available"*) ok=0; echo "  unexpected: update available line" ;; esac
+[ "$rc" -eq 0 ] || ok=0
+if [ "$ok" -eq 1 ]; then echo "PASS version-up-to-date"; PASS=$((PASS + 1))
+else echo "FAIL version-up-to-date (rc=$rc)"; while IFS= read -r l; do echo "  | $l"; done <<< "$out"; FAIL=$((FAIL + 1)); fi
+
+# ── 6. unreachable release endpoint → degrade quietly, rc=0 ──
+export HOOKLINE_LATEST_RELEASE_URL="http://127.0.0.1:9/latest.json"
+h=$(new_home "http://127.0.0.1:${port}")
+echo "1.0.0" > "$h/.local/share/hookline/VERSION"
+run_case "version-endpoint-down" "$h" 0 \
+  "1.0.0 (update check unavailable)"
+
+# ── 7. no VERSION file (pre-versioned install) → reported, rc=0 ──
+h=$(new_home "http://127.0.0.1:${port}")
+run_case "version-unknown" "$h" 0 \
+  "unknown (no VERSION file"
 
 echo
 echo "status-test: $PASS passed, $FAIL failed"

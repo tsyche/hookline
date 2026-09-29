@@ -127,6 +127,12 @@ cp "$DAEMON_SRC" "$DAEMON_DST"
 chmod +x "$DAEMON_DST"
 echo "Daemon installed to $DAEMON_DST"
 
+# Record the installed version — `hookline status` compares it against the
+# latest GitHub release to flag upgrades.
+if [ -f "${REPO}/VERSION" ]; then
+  cp "${REPO}/VERSION" "${LOG_DIR}/VERSION"
+fi
+
 # Install and register launchd plist
 sed -e "s|HOOKLINE_DAEMON_PATH|$CLI_DST|g" \
     -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
