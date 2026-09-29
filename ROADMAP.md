@@ -6,7 +6,8 @@
 > the source of truth, and the release workflow tags and publishes on the first main push
 > that carries a `VERSION` change. Sections below are **phases** (the same scheme as
 > Phases 0–4, house convention across projects), ordered next-up first: Phase 6
-> onboarding → Phase 7 remote control + E2E (Phases 0–5 shipped).
+> onboarding → Phase 8 multi-session → Phase 9 Linux (scoped) → Phase 7 remote
+> control + E2E (Phases 0–5 shipped).
 
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
@@ -40,10 +41,13 @@
 > window), setup wizard, `just check-gates`, opencode plugin tests.
 > **v1.7.0 tagged 2026-09-29** — pattern management CLI, CONTRIBUTING.md, in-repo
 > `.githooks/` + `just hooks`.
+> **v1.7.1 tagged 2026-09-29** — GNU/BSD `stat` fix (patterns mode restore on Linux
+> coreutils) + doc hygiene. **Unreleased on main:** version check, one-line install,
+> non-macOS install fail-fast guard.
 
 ## Goals
 
-hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account. Every feature beyond that is an opt-in upgrade — not a requirement.
+hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account (Linux support is scoped in Phase 9; installs elsewhere fail fast with a clear message). Every feature beyond that is an opt-in upgrade — not a requirement.
 
 **Notification transport tiers (all first-class, user's choice):**
 - **ntfy.sh public** — zero friction, works immediately, free; rate limits only a concern for very heavy use
@@ -56,12 +60,13 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 ## Recommended Next 3
 
 1. **Long question lists — chunked/compressed bodies** (~1–2h) — Phase 6 item
-2. **Multi-session targeting (bare terminals)** (~4–8h) — Phase 8 item
-3. **grok adapter** (~3–4h) — Phase 6 item, awaits a go decision
+2. **grok adapter** (~3–4h) — Phase 6 item, awaits a go decision
+3. **Snooze mode** (~1–2h) — Phase 8 item
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
-> Version check and one-line install shipped 2026-09-29 (unreleased — in `[Unreleased]`).
+> Version check, one-line install, and bare-terminal multi-session targeting shipped
+> 2026-09-29 (unreleased — in `[Unreleased]`).
 > grok adapter (Phase 6) awaits a go decision; Phase 7 remote control + E2E need
 > on-device human steps.
 
@@ -156,7 +161,14 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
 ## Phase 8 — Medium-term
 
 - **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
-- **Multi-session support (bare terminals)** — per-terminal plumbing to capture a stable window/tab/pane identifier at session registration time and target it precisely at injection time; iTerm2 (AppleScript session ID), WezTerm (`wezterm cli --pane-id`), Terminal.app (window/tab index, fragile); ~2–3h per terminal emulator
+- **Multi-session support (bare terminals)** — ✅ shipped 2026-09-29 (unreleased):
+  `focus_prompt_window` (hooks/core.sh) runs before every keystroke injection —
+  iTerm2 selects the window/tab by `TERM_SESSION_ID` UUID (live-probed), WezTerm
+  activates the pane via `wezterm cli activate-pane --pane-id`; Terminal.app /
+  unknown terminals keep the frontmost fallback (no stable id — Window/tab index
+  stays fragile, deliberately untouched); tmux already pane-exact. Watchers inject
+  (both adapters), so the terminal env rides the hook process — no daemon changes.
+  Tests: `scripts/focus-test.sh` (15 dry-run cases, in `check-gates`)
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
@@ -171,7 +183,21 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
 - **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core
 - **Direct mode via Tailscale / VPN** — zero relay dependency; the endpoint design (port `7676`, `/pending`, `/respond`) and mobile interface options (PWA, Shortcut, companion app) are specced in [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)
 - **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
-- **Linux support** — replace `osascript` keystroke injection with `xdotool` / `ydotool`
+- **Linux support** — tiered, so tmux users get value first:
+  - **Tier 1 — daemon + tmux path (~4–6h):** `systemd --user` units replace the launchd
+    plists (daemon + watchdog `StartInterval`); `install.sh`/`uninstall.sh`/`hookline
+    doctor|status|daemon` branch on platform (`systemctl --user` vs `launchctl`); the
+    non-macOS fail-fast guard flips to allow Linux with systemd present; bare-terminal
+    injection (osascript) stays macOS-only — the tmux `send-keys` path is already
+    portable. Watch-outs: `loginctl enable-linger` for SSH/headless sessions,
+    `~/.config/systemd/user/` unit files, watchdog checks `systemctl --user is-active`
+  - **Tier 2 — bare terminals (~4–6h):** replace frontmost-app `osascript` keystroke
+    injection with `xdotool` (X11) / `ydotool` (Wayland, needs uinput + rootless udev);
+    terminal detection covers kitty/alacritty/foot/gnome-terminal; focus-dependent,
+    same limitation as macOS bare terminals (tmux remains the focus-independent path)
+  - Acceptance: fresh Ubuntu/Debian box — one-line install registers systemd units,
+    daemon runs, phone notification + Allow/Deny round-trip works in a tmux session
+  - Not in scope: Windows/WSL (separate spike if ever)
 - **Notification content control** — configurable truncation; redact sensitive path segments
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)
 - **Always-deny patterns** — companion to allowlist for commands that should always be blocked

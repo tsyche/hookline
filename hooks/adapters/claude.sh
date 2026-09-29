@@ -134,6 +134,7 @@ adapter_inject() {
       log "background: answer label '$label' not in option list, ignoring"
       return 0
     fi
+    focus_prompt_window || true
     if [ -n "$proc" ]; then
       osascript \
         -e "tell application \"System Events\" to tell process \"$proc\" to keystroke \"$idx\"" \
@@ -146,12 +147,14 @@ adapter_inject() {
         2>/dev/null
     fi
   elif [ "$action" = "deny" ]; then
+    focus_prompt_window || true
     if [ -n "$proc" ]; then
       osascript -e "tell application \"System Events\" to tell process \"$proc\" to key code 53" 2>/dev/null
     else
       osascript -e "tell application \"System Events\" to key code 53" 2>/dev/null
     fi
   else
+    focus_prompt_window || true
     if [ -n "$proc" ]; then
       osascript \
         -e "tell application \"System Events\" to tell process \"$proc\" to keystroke \"1\"" \

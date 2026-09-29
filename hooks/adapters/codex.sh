@@ -120,6 +120,7 @@ adapter_inject() {
     tmux send-keys -t "$TMUX_PANE" "$key" 2>/dev/null
   else
     log "background: injecting '$action' ($label) via frontmost app (osascript)"
+    focus_prompt_window || true
     if [ "$action" = "deny" ]; then
       osascript -e 'tell application "System Events" to key code 53' 2>/dev/null
     else

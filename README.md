@@ -207,6 +207,7 @@ just status-test    # sandboxed `hookline status` report tests
 just patterns-test  # sandboxed `hookline patterns`/`remove-pattern`/`clear-patterns` tests
 just install-test   # sandboxed install/uninstall round-trip tests
 just get-test       # sandboxed get.sh one-line install tests (file:// tarball)
+just focus-test     # sandboxed bare-terminal focus-targeting tests (dry-run)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 bash scripts/test.sh
 ```
@@ -240,12 +241,14 @@ files. Optionally removes config and logs.
 | Terminal | Method | Notes |
 |----------|--------|-------|
 | tmux | `tmux send-keys` | Focus-independent; works with any terminal inside tmux |
-| iTerm2 | AppleScript | Requires Accessibility permission for iTerm2 |
-| Terminal.app | AppleScript | Requires Accessibility permission for Terminal |
-| WezTerm | AppleScript | Requires Accessibility permission for WezTerm |
+| iTerm2 | AppleScript (session-targeted) | Selects the prompt's own window/tab by `TERM_SESSION_ID` before the keystroke, so multiple open sessions don't cross wires |
+| Terminal.app | AppleScript | Window index only — targets the frontmost window (fragile with several sessions) |
+| WezTerm | AppleScript (pane-targeted) | `wezterm cli activate-pane --pane-id` focuses the prompt's pane first, then the keystroke lands |
 | Other | AppleScript (frontmost) | Targets whichever app is in focus |
 | OpenCode TUI | Reply API (no injection) | The plugin answers the prompt in-process; no terminal focus or Accessibility needed |
 | Codex TUI | `tmux send-keys` (own pane) / AppleScript | `PermissionRequest` declines → codex's own approval menu shows; phone answer injects Enter (approve) / Esc (cancel) into the pane that owns the prompt |
+
+When the phone answers a prompt in a bare terminal, hookline first focuses the exact session that asked (iTerm2 by session id, WezTerm by pane id) so keystrokes never land in a neighboring window; Terminal.app and unknown terminals keep the previous frontmost behavior. tmux needs none of this — `send-keys` targets the pane directly.
 
 For the AppleScript terminals, keystroke injection is performed by the hook process (a child of your terminal), so macOS Accessibility permission is only needed for the terminal app itself — never for a background process. tmux injection uses `tmux send-keys` (run by the daemon) and needs no Accessibility permission at all.
 

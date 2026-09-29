@@ -8,6 +8,7 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ### Added
 
+- Bare-terminal multi-session targeting — when the phone answers a prompt, hookline now focuses the exact session that asked before injecting keystrokes: iTerm2 selects the window/tab whose AppleScript session id matches `TERM_SESSION_ID` (prefix stripped — `w0t1p2:UUID` builds included), WezTerm runs `wezterm cli activate-pane --pane-id $WEZTERM_PANE`. Terminal.app and unknown terminals keep the frontmost fallback (no stable id exists); tmux unchanged (`send-keys` already pane-exact). New `focus_prompt_window` in `hooks/core.sh`, `HOOKLINE_FOCUS_DRY_RUN=1` for offline tests (`scripts/focus-test.sh`, 15 cases)
 - `hookline status` version check — compares the installed version (recorded by `install.sh` as `~/.local/share/hookline/VERSION`) against the latest GitHub release tag and flags the upgrade; degrades quietly when the endpoint is unreachable, and `HOOKLINE_LATEST_RELEASE_URL` overrides the endpoint so tests stay offline
 - One-line install — `curl -fsSL https://raw.githubusercontent.com/tsyche/hookline/main/get.sh | bash` resolves the latest GitHub release (or `HOOKLINE_VERSION`), downloads the tagged tarball to a temp dir, and runs its `install.sh`; the topic prompt re-attaches to the terminal via `/dev/tty`, and `HOOKLINE_TARBALL_BASE` lets tests run offline (`scripts/get-test.sh`, 11 cases)
 

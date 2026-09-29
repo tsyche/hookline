@@ -129,6 +129,60 @@ build_question_message() {
   log "question buttons: ${bc:-0} (qcount=${qcount:-?} opts=${nopts:-?} multiple=$multiple no_actions=${ADAPTER_NO_ACTIONS:-0})"
 }
 
+# Best-effort focus of the session that owns the pending prompt, run right
+# before keystroke injection in a bare terminal. With several sessions of the
+# same app open, System Events keystrokes land in whichever window that app
+# currently focuses — this selects the prompt's own window/tab first so the
+# phone answer reaches the right one (Phase 8 multi-session targeting).
+# tmux never reaches here (daemon/watcher send-keys target the pane directly).
+# Returns 1 when there is no stable id (Terminal.app, unknown terminals) —
+# callers keep the existing frontmost behavior. HOOKLINE_FOCUS_DRY_RUN=1
+# prints the command instead of running it (offline tests).
+focus_prompt_window() {
+  local sid_uuid script
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app)
+      [ -n "${TERM_SESSION_ID:-}" ] || return 1
+      # TERM_SESSION_ID is "prefix:UUID" on current iTerm2 (bare UUID on
+      # older builds) — the AppleScript session id is the UUID part.
+      sid_uuid="${TERM_SESSION_ID##*:}"
+      script="tell application \"iTerm2\"
+  set want to \"$sid_uuid\"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if (id of s) as string is want then
+          select t
+          select w
+          activate
+          return true
+        end if
+      end repeat
+    end repeat
+  end repeat
+  return false
+end tell"
+      if [ "${HOOKLINE_FOCUS_DRY_RUN:-0}" = 1 ]; then
+        printf 'osascript %s\n' "$script"
+        return 0
+      fi
+      osascript -e "$script" >/dev/null 2>&1
+      ;;
+    WezTerm)
+      [ -n "${WEZTERM_PANE:-}" ] || return 1
+      if [ "${HOOKLINE_FOCUS_DRY_RUN:-0}" = 1 ]; then
+        printf 'wezterm cli activate-pane --pane-id %s\n' "$WEZTERM_PANE"
+        return 0
+      fi
+      command -v wezterm >/dev/null 2>&1 || return 1
+      wezterm cli activate-pane --pane-id "$WEZTERM_PANE" >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 core_main() {
   if [ -f "$DISABLED_FLAG" ]; then
     adapter_emit_decision defer
