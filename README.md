@@ -170,6 +170,9 @@ hookline daemon start         # start the daemon
 hookline daemon stop          # stop the daemon
 hookline daemon restart       # restart the daemon
 hookline daemon status        # daemon pid, sessions, pending approvals, heartbeat/SSE ages
+hookline patterns             # list allowlist entries (project + global settings)
+hookline remove-pattern <p>   # drop one entry (`--global` for the global file)
+hookline clear-patterns       # wipe the project allowlist (`--global` for global)
 ```
 
 If phone notifications stop arriving, run `hookline doctor` — it checks the
@@ -187,6 +190,7 @@ just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
 just test-plugin    # opencode plugin unit tests (node --test)
 just doctor-test    # sandboxed `hookline doctor` report tests
 just status-test    # sandboxed `hookline status` report tests
+just patterns-test  # sandboxed `hookline patterns`/`remove-pattern`/`clear-patterns` tests
 just install-test   # sandboxed install/uninstall round-trip tests
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 bash scripts/test.sh

@@ -51,7 +51,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Pattern management CLI** (~2–3h) — `hookline patterns` / `remove-pattern` / `clear-patterns`
+1. **Pattern management CLI** (~2–3h) — `hookline patterns` / `remove-pattern` / `clear-patterns` — committed, pending release
 2. **CONTRIBUTING.md** (~1–2h) — adapters, backend, testing, PR process
 3. **In-repo git hooks** (~1h) — vendor `.githooks/` so fresh clones get `check-docs` locally
 
@@ -67,10 +67,11 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Phase 6 — Onboarding & contributors (next)
 
-1. **Pattern management CLI** (~2–3h)
-   - `hookline patterns` — list current allowlist
-   - `hookline remove-pattern <pattern>` — remove without hand-editing JSON
-   - `hookline clear-patterns` — wipe project allowlist
+1. **Pattern management CLI** (~2–3h) — committed, pending release
+   - `hookline patterns` — list current allowlist (project + global scopes, non-consulted entries flagged)
+   - `hookline remove-pattern [--global] <pattern>` — remove without hand-editing JSON (bare patterns wrapped in `Bash(...)`; atomic edit, mode preserved)
+   - `hookline clear-patterns [--global]` — wipe project allowlist (global only with `--global`)
+   - covered by `just patterns-test` (15 sandboxed cases, in `check-gates`)
 
 2. **CONTRIBUTING.md** (~1–2h)
    - How to add a notification backend, how to add a provider adapter, how to test the hook locally (`just lint && just golden && just check-docs`), PR process

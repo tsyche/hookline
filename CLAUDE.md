@@ -47,6 +47,7 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   `tests/test_daemon.py` — daemon unit tests; `tests/test_plugin.mjs` — opencode plugin
   unit tests; `scripts/doctor-test.sh` — sandboxed doctor report tests;
   `scripts/status-test.sh` — sandboxed status report tests;
+  `scripts/patterns-test.sh` — sandboxed pattern-CLI tests;
   `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
   `scripts/release-smoke-test.sh` — sandboxed release smoke check tests).
   Install/uninstall honor `HOOKLINE_SANDBOX=1` (no launchctl, no `/usr/local/bin`).
@@ -64,6 +65,7 @@ just test-daemon    # daemon unit tests (registry, routing, heartbeat, watchdog)
 just test-plugin    # opencode plugin unit tests (node --test, fake SDK client)
 just doctor-test    # sandboxed `hookline doctor` report tests (no network, no launchd)
 just status-test    # sandboxed `hookline status` report tests (no network, no launchd)
+just patterns-test  # sandboxed pattern-CLI tests (`patterns`/`remove-pattern`/`clear-patterns`)
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 just status         # config, daemon status, connectivity, recent log

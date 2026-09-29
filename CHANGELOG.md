@@ -6,6 +6,11 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- `hookline patterns` — list allowlist entries from the project (`.claude/settings.local.json`) and global (`~/.claude/settings.json`) settings files, flagging entries the hook does not consult; `hookline remove-pattern [--global] <pattern>` drops one entry (bare patterns are wrapped in `Bash(...)`) with not-found diagnostics; `hookline clear-patterns [--global]` wipes the allowlist while preserving sibling settings keys — edits are atomic (temp file beside the target), preserve file mode, and refuse invalid JSON
+- `just patterns-test` — 15 sandboxed pattern-CLI cases wired into `check-gates`
+
 ## [1.6.0] - 2026-09-28
 
 ### Added

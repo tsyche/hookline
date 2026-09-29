@@ -34,6 +34,11 @@ Commands:
   daemon stop     Stop the daemon
   daemon restart  Restart the daemon
   daemon status   Show daemon status
+  patterns        List the allowlist entries hookline consults (project + global)
+  remove-pattern [--global] <pattern>
+                  Remove one allowlist entry (bare patterns get wrapped in Bash(...))
+  clear-patterns [--global]
+                  Wipe the project allowlist (global only with --global)
   enable          Re-enable hookline after a disable
   disable         Disable hookline (all tools auto-approved silently)
   help            Show this help
@@ -90,6 +95,148 @@ cmd_topic() {
 
   echo
   echo "→ Subscribe to '${new_topic}' (and '${new_topic}-response') in the ntfy app."
+}
+
+# ── pattern management ────────────────────────────────────────────────────────
+# The allowlist is Claude-style permissions.allow[] — project file
+# ./.claude/settings.local.json (what `Always allow` writes) plus the global
+# ~/.claude/settings.json. Only Bash(...) entries are consulted by the hook.
+
+patterns_global() { echo "${HOME}/.claude/settings.json"; }
+patterns_project() { echo "${PWD}/.claude/settings.local.json"; }
+
+# Normalize an argument to a full entry: already-wrapped strings pass through,
+# bare patterns (or bare commands) are wrapped in Bash(...).
+pattern_entry() {
+  case "$1" in
+    *"("*) printf '%s' "$1" ;;
+    *)     printf 'Bash(%s)' "$1" ;;
+  esac
+}
+
+# Read permissions.allow[] from a settings file; prints nothing when absent.
+pattern_read() {
+  [ -f "$1" ] || return 0
+  jq -r '(.permissions.allow // [])[]' "$1" 2>/dev/null
+}
+
+# Validate a settings file exists-and-is-JSON before we edit it.
+# Prints a diagnostic and returns 1 on bad input.
+pattern_check_json() {
+  [ -f "$1" ] || return 0
+  if ! jq -e . "$1" >/dev/null 2>&1; then
+    echo "error: $1 is not valid JSON — fix it first" >&2
+    return 1
+  fi
+}
+
+# Apply jq (remaining args = options + filter) to a settings file atomically:
+# temp file beside the target (same filesystem → atomic mv), mode preserved.
+pattern_apply() { # pattern_apply <file> <jq args...>
+  local file="$1" tmp mode
+  shift
+  mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file" 2>/dev/null)
+  tmp=$(mktemp "$(dirname "$file")/.hookline-pattern.XXXXXX")
+  if ! jq "$@" "$file" > "$tmp"; then
+    rm -f "$tmp"
+    echo "error: failed to edit $file" >&2
+    return 1
+  fi
+  [ -n "$mode" ] && chmod "$mode" "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Delete one entry from a settings file's permissions.allow[]; drops the
+# permissions object when it ends up empty.
+pattern_delete_entry() { # pattern_delete_entry <file> <entry>
+  # shellcheck disable=SC2016  # $e is a jq variable, not a shell one
+  pattern_apply "$1" --arg e "$2" \
+    '(.permissions.allow) |= (map(select(. != $e)))
+     | if (.permissions.allow | length) == 0 then del(.permissions.allow) else . end
+     | if (.permissions | length) == 0 then del(.permissions) else . end'
+}
+
+cmd_patterns() {
+  local global project entry listed=0
+  global=$(patterns_global)
+  project=$(patterns_project)
+
+  for scope_file in "project:$project" "global:$global"; do
+    local scope="${scope_file%%:*}" file="${scope_file#*:}"
+    [ -f "$file" ] || continue
+    pattern_check_json "$file" || return 1
+    local found=0
+    while IFS= read -r entry; do
+      [ -z "$entry" ] && continue
+      if [ "$found" -eq 0 ]; then
+        echo "$scope ($file):"
+        found=1
+      fi
+      case "$entry" in
+        Bash\(*) echo "  $entry" ;;
+        *)       echo "  $entry  (not consulted by the hook)" ;;
+      esac
+      listed=1
+    done < <(pattern_read "$file")
+    [ "$found" -eq 0 ] && echo "$scope ($file): (none)"
+  done
+
+  if [ "$listed" -eq 0 ]; then
+    echo "no allowlist entries — patterns saved via 'Always allow' will show up here"
+  fi
+  echo
+  echo "project = ${PWD}/.claude/settings.local.json · built-in safe prefixes (echo, ls, ...) never appear here"
+}
+
+cmd_remove_pattern() {
+  local scope="project" arg
+  if [ "${1:-}" = "--global" ]; then scope="global"; shift; fi
+  arg="${1:-}"
+  if [ -z "$arg" ]; then
+    echo "usage: hookline remove-pattern [--global] <pattern>" >&2
+    return 1
+  fi
+
+  local file entry
+  if [ "$scope" = "global" ]; then file=$(patterns_global); else file=$(patterns_project); fi
+  if [ ! -f "$file" ]; then
+    echo "no allowlist file at $file — nothing to remove"
+    return 1
+  fi
+  pattern_check_json "$file" || return 1
+
+  entry=$(pattern_entry "$arg")
+  if ! pattern_read "$file" | grep -Fxq "$entry"; then
+    echo "pattern not found in $file: $entry"
+    echo "run 'hookline patterns' to see the current allowlist"
+    return 1
+  fi
+  pattern_delete_entry "$file" "$entry" || return 1
+  echo "removed $entry from $file"
+}
+
+cmd_clear_patterns() {
+  local scope="project"
+  if [ "${1:-}" = "--global" ]; then scope="global"; fi
+
+  local file count
+  if [ "$scope" = "global" ]; then file=$(patterns_global); else file=$(patterns_project); fi
+  if [ ! -f "$file" ]; then
+    echo "no allowlist file at $file — nothing to clear"
+    return 0
+  fi
+  pattern_check_json "$file" || return 1
+
+  count=$(pattern_read "$file" | grep -c . || true)
+  if [ "$count" -eq 0 ]; then
+    echo "no allowlist entries in $file — nothing to clear"
+    return 0
+  fi
+
+  pattern_apply "$file" '(.permissions.allow) = []
+     | if (.permissions.allow | length) == 0 then del(.permissions.allow) else . end
+     | if (.permissions | length) == 0 then del(.permissions) else . end' || return 1
+  echo "cleared $count entr$( [ "$count" -eq 1 ] && echo y || echo ies ) from $file"
 }
 
 # ── setup wizard ──────────────────────────────────────────────────────────────
@@ -789,6 +936,9 @@ case "${1:-help}" in
   setup)          cmd_setup ;;
   topic)          shift; cmd_topic "$@" ;;
   daemon)         shift; cmd_daemon "$@" ;;
+  patterns)       cmd_patterns ;;
+  remove-pattern) shift; cmd_remove_pattern "$@" ;;
+  clear-patterns) shift; cmd_clear_patterns "$@" ;;
   enable)         cmd_enable ;;
   disable)        cmd_disable ;;
   help|--help|-h) usage ;;

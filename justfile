@@ -60,7 +60,7 @@ test-plugin:
     node --test tests/test_plugin.mjs
 
 # Run every gate CI runs — the single source of truth for local + CI checks
-check-gates: lint golden test-daemon test-plugin doctor-test status-test install-test release-smoke-test check-docs
+check-gates: lint golden test-daemon test-plugin doctor-test status-test patterns-test install-test release-smoke-test check-docs
     @echo "all gates passed"
 
 # Sandboxed checks for `hookline doctor` (fake HOME, no network, no launchd)
@@ -70,6 +70,10 @@ doctor-test:
 # Sandboxed checks for `hookline status` daemon section (fake HOME, no network)
 status-test:
     bash scripts/status-test.sh
+
+# Sandboxed checks for the pattern-management commands (fake HOME, no network)
+patterns-test:
+    bash scripts/patterns-test.sh
 
 # Sandboxed install/uninstall round-trip tests (fake HOME, no launchd)
 install-test:
