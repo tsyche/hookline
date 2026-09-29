@@ -6,6 +6,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-28
+
 ### Added
 
 - `hookline setup` — guided setup wizard: transport choice (ntfy.sh public default · self-hosted URL/auth + ready `docker-compose.yml` · direct/Tailscale shown as not-yet-available), topic keep/generate/validate, subscribe QR via `qrencode` (URL always printed), tmux detect with install offer and no-tmux injection warning, and a live test notification on every path; idempotent config writes, daemon restart only when config actually changed
@@ -64,7 +66,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 - Release automation (VERSION-triggered release workflow, release-smoke CI) and the shipped roadmap ledger
 - First tagged release (earlier milestones: v1.1 stable, v1.2 core — shipped untagged in 2026-06)
 
-[Unreleased]: https://github.com/tsyche/hookline/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/tsyche/hookline/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/tsyche/hookline/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tsyche/hookline/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tsyche/hookline/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tsyche/hookline/releases/tag/v1.3.0
