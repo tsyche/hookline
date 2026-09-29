@@ -17,6 +17,8 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.4.0 | 2026-09-26 | tagged release covering the Phase 5 / 5b rows above (doctor, watchdog, tests, roadmap phase rework) |
 | CHANGELOG | 2026-09-27 | Keep-a-Changelog file created, backfilled from v1.3.0 / v1.4.0 tags, `[Unreleased]` for pending work |
 | v1.5.0 | 2026-09-27 | tagged release covering the Phase 6 rows below (codex adapter, response-file hardening, MCP matcher, changelog-promote, grok spike) |
+| v1.6.0 | 2026-09-29 | question-dialog phone flow (typed/word replies, extended window), setup wizard, `just check-gates`, opencode plugin tests |
+| v1.7.0 | 2026-09-29 | pattern management CLI, CONTRIBUTING.md, in-repo `.githooks/` + `just hooks` |
 
 ## v1.1 — Stable (archived)
 
@@ -197,3 +199,61 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       daemon restart only on real config change
     - `install.sh` now preserves existing config (topic, self-hosted server/auth, extended
       window) instead of overwriting — reinstalls keep wizard-set values
+
+## Phase 6 (batch 2) — Onboarding & contributors (shipped 2026-09-29, v1.6.0 / v1.7.0)
+
+14. **Question-dialog phone flow (opencode + claude/local custom)** — committed `ed47d64` 2026-09-28, released v1.6.0 2026-09-29
+    - Gap closed: plugin hooks `question.asked`/`question.v2.asked` (spawns the hook) and
+      `question.replied`/`rejected` (local-answer counter) — question dialogs get the same
+      20s grace + phone notification as permission prompts; claude AskUserQuestion rides the
+      same `build_question_message` builder (moved to core.sh) for identical body/buttons
+    - Tap-to-answer: a single single-select question with 1–3 options gets its options as ntfy
+      buttons → reply bridge → `question.reply` (v2 SDK client built over the injected v1
+      client's transport — v1 has no `question` API and plain TCP to serverUrl is refused);
+      claude answers inject the option number (daemon tmux send-keys, osascript otherwise);
+      multi-select/stacked stay notify-only with the full question in the body
+    - Typed replies: single-select questions ship their label list in the notify payload —
+      replying with a number (`4`) or letter (`D`) on the bare topic resolves to
+      `answer|<label>` (second bare-topic SSE listener); works for any option count past
+      ntfy's 3-button cap, which also suppresses the default trio via `no_actions`
+    - Word replies: `retry`/`deny` anywhere (`allow` for permissions); invalid replies push
+      a correction notification with Retry/Deny buttons instead of silence
+    - Extended window: watcher survives the phone timeout for `HOOKLINE_EXTENDED_WAIT`
+      (default 3600s, checks every 180s) so late answers and `retry` still land; expiry
+      cancels the pending entry
+    - Tests: 10 new golden cases (37 total) + 19 new daemon tests (49 total)
+
+15. **Pattern management CLI** — done 2026-09-29, released v1.7.0
+    - `hookline patterns` lists `permissions.allow[]` from the project
+      (`.claude/settings.local.json`) and global (`~/.claude/settings.json`) settings files,
+      flagging non-`Bash(...)` entries the hook does not consult
+    - `hookline remove-pattern [--global] <pattern>` — bare patterns wrapped in `Bash(...)`;
+      `hookline clear-patterns [--global]` wipes the allowlist while preserving sibling keys;
+      edits are atomic (temp file beside the target), preserve file mode, refuse invalid JSON,
+      drop `permissions.allow`/`permissions` when they end up empty
+    - `scripts/patterns-test.sh` — 15 sandboxed cases, wired into `check-gates`
+    - CI caught a GNU/BSD `stat` divergence on the first run (`stat -f` = filesystem status on
+      GNU, so mode preservation silently no-op'd → files became `0600`); fixed by trying
+      `stat -c` first and treating a failed `chmod` as fatal — the test that caught it also
+      guards the fix
+
+16. **CONTRIBUTING.md** — done 2026-09-29, released v1.7.0
+    - Local testing workflow + test-layer map, how to add a provider adapter (interface
+      defers to the `hooks/core.sh` contract block; registration shapes: settings JSON /
+      hooks.json merge / plugin copy, each with an inverse in `uninstall.sh`),
+      how to add a notification backend (ntfy legs to replace, unix-socket JSON contract to
+      keep), PR process (Conventional Commits, `check-gates`, changelog-promote on bump);
+      README links it
+
+17. **In-repo git hooks** — done 2026-09-29, released v1.7.0
+    - Vendored `.githooks/` (pre-commit = AGENTS→CLAUDE sync + `check-docs`; pre-push =
+      `check-gates`) enabled by `just hooks` (repo-local `core.hooksPath`); both skip
+      gracefully when `just`/the recipe is absent and accept `--no-verify`
+    - Closes the local-feedback gap: the checks previously lived only in a machine-global
+      `~/.git-hooks`, so fresh clones got nothing; CI runs the same recipe either way
+
+18. **Generic provider naming audit** — done 2026-09-29 (Phase 7 item)
+    - Setup-wizard strings, README, status/doctor copy, docs/, ledger verified clean;
+      3 stragglers fixed in tracked docs (CHANGELOG 1.6.0 entry, CONTRIBUTING alias
+      example, roadmap question-flow entry); code comments exempt — ids live in untracked
+      config + the code that consumes them

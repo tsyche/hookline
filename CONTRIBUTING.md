@@ -100,8 +100,8 @@ top of `hooks/core.sh` — that comment block is the source of truth.
    invert byte-identically.
 
 3. **Alias if needed.** Provider-id → adapter-file mapping is one case
-   statement in `hooks/hookline.sh`; that's the only aliasing point
-   (`blackbox` → `claude` rides an existing arm).
+   statement in `hooks/hookline.sh`; that's the only aliasing point — a
+   claude-riding custom provider already takes that arm.
 
 4. **Gate with `HOOKLINE_PROVIDERS`.** No code change needed — the gate in
    `hooks/hookline.sh` accepts any token; ids are free-form. Unset means all

@@ -36,6 +36,10 @@
 > **v1.5.0 tagged 2026-09-27** — codex adapter live (interim `PermissionRequest` Flow A),
 > response-file hardening (`mktemp` + `0600`), codex MCP matcher, `just changelog-promote`,
 > grok seam spike confirmed. Archived in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> **v1.6.0 tagged 2026-09-29** — question-dialog phone flow (typed/word replies, extended
+> window), setup wizard, `just check-gates`, opencode plugin tests.
+> **v1.7.0 tagged 2026-09-29** — pattern management CLI, CONTRIBUTING.md, in-repo
+> `.githooks/` + `just hooks`.
 
 ## Goals
 
@@ -51,12 +55,14 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Pattern management CLI** (~2–3h) — `hookline patterns` / `remove-pattern` / `clear-patterns` — committed, pending release
-2. **CONTRIBUTING.md** (~1–2h) — adapters, backend, testing, PR process — committed, pending release
-3. **In-repo git hooks** (~1h) — vendored `.githooks/` + `just hooks` — committed, pending release
+1. **Long question lists — chunked/compressed bodies** (~1–2h) — Phase 6 item
+2. **Version / upgrade check** (~0.5–1h) — Phase 6 item
+3. **One-line install** (~1–2h) — Phase 6 item
 
-> Previous recommended 3 (`check-gates`, opencode plugin tests, setup wizard) all shipped
-> 2026-09-28 — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
+> 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> grok adapter (Phase 6) awaits a go decision; Phase 7 remote control + E2E need
+> on-device human steps.
 
 ## Phase 5 — Reliability & self-healing (complete)
 
@@ -67,65 +73,30 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Phase 6 — Onboarding & contributors (next)
 
-1. **Pattern management CLI** (~2–3h) — committed, pending release
-   - `hookline patterns` — list current allowlist (project + global scopes, non-consulted entries flagged)
-   - `hookline remove-pattern [--global] <pattern>` — remove without hand-editing JSON (bare patterns wrapped in `Bash(...)`; atomic edit, mode preserved)
-   - `hookline clear-patterns [--global]` — wipe project allowlist (global only with `--global`)
-   - covered by `just patterns-test` (15 sandboxed cases, in `check-gates`)
+> Items 1–3 (pattern CLI, CONTRIBUTING, in-repo git hooks) shipped 2026-09-29 in
+> **v1.7.0**; item 5 (question-dialog phone flow) shipped 2026-09-29 in **v1.6.0**;
+> the internal link check shipped 2026-09-25 with `check-docs` (stale entry — probe-verified
+> 2026-09-29). Details in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-2. **CONTRIBUTING.md** (~1–2h) — committed, pending release
-   - How to add a notification backend, how to add a provider adapter, how to test the hook locally (`just lint && just golden && just check-docs`), PR process
-   - CI half of the original item is done: lint + golden + check-docs run on push/PR; Dependabot grouped monthly for `github-actions`
-
-3. **In-repo git hooks** (~1h) — committed, pending release
-   - The `check-docs` pre-commit hook previously ran from machine-local `~/.git-hooks` via a global `core.hooksPath` — contributors (and any fresh clone) never got it
-   - Shipped: vendored `.githooks/` (pre-commit = doc sync + `check-docs`, pre-push = `check-gates`) enabled via `just hooks`, documented in CONTRIBUTING; CI already gates the same checks
-
-4. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
+1. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
    [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md)); not approved/built
    - Claude-compatible `PreToolUse` hooks in `~/.grok/hooks/*.json` (always-trusted), stdout
      decisions `allow|deny|ask|defer`; `ask` forces grok's prompt — the Flow A seam without
      codex's decline trick
    - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
 
-5. **Question-dialog phone flow (opencode + claude/blackbox)** — committed `ed47d64` 2026-09-28, pending release
-   - Gap closed: plugin hooks `question.asked`/`question.v2.asked` (spawns the hook) and
-     `question.replied`/`rejected` (local-answer counter) — question dialogs get the same
-     20s grace + phone notification as permission prompts; claude AskUserQuestion rides the
-     same `build_question_message` builder (moved to core.sh) for identical body/buttons
-   - Tap-to-answer: a single single-select question with 1–3 options gets its options as ntfy
-     buttons → reply bridge → `question.reply` (v2 SDK client built over the injected v1
-     client's transport — v1 has no `question` API and plain TCP to serverUrl is refused);
-     claude answers inject the option number (daemon tmux send-keys, osascript otherwise);
-     multi-select/stacked stay notify-only with the full question in the body
-   - Typed replies: single-select questions ship their label list in the notify payload —
-     replying with a number (`4`) or letter (`D`) on the bare topic resolves to
-     `answer|<label>` (second bare-topic SSE listener); works for any option count past
-     ntfy's 3-button cap, which also suppresses the default trio via `no_actions`
-   - Word replies: `retry`/`deny` anywhere (`allow` for permissions); invalid replies push
-     a correction notification with Retry/Deny buttons instead of silence
-   - Extended window: watcher survives the phone timeout for `HOOKLINE_EXTENDED_WAIT`
-     (default 3600s, checks every 180s) so late answers and `retry` still land; expiry
-     cancels the pending entry
-   - Tests: 10 new golden cases (37 total) + 19 new daemon tests (49 total)
-
-6. **One-line install** (~1–2h)
+2. **One-line install** (~1–2h)
    - README install is `git clone` + `just install`; a `curl -fsSL … | bash` path from a pinned
      GitHub release shortens the 5-minute install goal (release tarball or raw-GitHub fetch —
      `install.sh` today assumes repo-relative files)
    - Acceptance: fresh machine install with no git checkout of the repo
 
-7. **Version / upgrade check** (~0.5–1h)
+3. **Version / upgrade check** (~0.5–1h)
     - `hookline status` (and/or `doctor`) flags when the latest GitHub release tag is newer than
       the installed `VERSION` — release-smoke already fetches the latest tag, reuse that
     - Acceptance: outdated install reports the newer tag; up-to-date install stays quiet
 
-8. **Internal link check** (~0.5h)
-    - Extend `check-docs` to verify relative markdown links (ROADMAP → ledger, README → ROADMAP, …)
-      so cross-doc references can't rot silently
-    - Acceptance: a deliberately broken relative link fails `just check-docs`
-
-9. **Long question lists — chunked/compressed bodies** (~1–2h)
+4. **Long question lists — chunked/compressed bodies** (~1–2h)
     - Today the notification body truncates at 1500 chars, so a question with a long option
       list (or verbose descriptions) can lose options at the tail — typing still resolves
       any number, but the reader can't see what they're picking
@@ -135,7 +106,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
     - Acceptance: a 30-option question with descriptions arrives fully visible and answerable
       by number
 
-10. **`context` keyword — side-thread assessed summary** (~2–4h)
+5. **`context` keyword — side-thread assessed summary** (~2–4h)
     - Type `context` while a question/permission is pending → a short assessed summary of
       where the conversation stands (not just raw lines) arrives as a new notification; the
       original prompt stays pending and is answered afterwards as usual
@@ -173,10 +144,12 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
   - Residual risk (documented): ntfy still sees metadata — timing, sizes, topic name;
     self-hosted ntfy closes that too
   - 🧑 needs-human: key paste and decryption verified in a phone browser
-- [ ] **Generic provider naming in app-facing text** — setup/docs/status copy must never
+- [x] **Generic provider naming in app-facing text** — setup/docs/status copy must never
   name private local providers (use "local" / "custom"); concrete ids stay in untracked
-  config. Applied to README/ROADMAP/ledger 2026-09-25; verify future setup-wizard strings
-  and audit tracked agent docs (`AGENTS.md`/`CLAUDE.md`) for stragglers.
+  config. Applied to README/ROADMAP/ledger 2026-09-25; setup-wizard strings verified clean
+  and agent docs (`AGENTS.md`/`CLAUDE.md`) audited 2026-09-29 — 3 stragglers fixed
+  (CHANGELOG 1.6.0 entry, CONTRIBUTING alias example, roadmap question-flow entry); code
+  comments exempt (ids live in untracked config + the code that consumes them).
 
 ## Phase 8 — Medium-term
 
