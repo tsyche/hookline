@@ -205,6 +205,26 @@ not_exists "config-removed-on-y" "$CONFIG"
 not_exists "config-dir-removed-on-y" "$H/.config/hookline"
 not_exists "share-dir-removed-on-y" "$H/.local/share/hookline"
 
+# ── 6. non-macOS without sandbox → fail fast before any write ──
+# Separate fake HOME (leaves the round-trip state alone); OSTYPE override
+# forces the Linux branch on this mac. launchctl is stubbed so a regression
+# in the guard can't touch real launchd — and the stub would surface it.
+lh="$sandbox/linux-home"
+mkdir -p "$lh/.claude" "$lh/.config" "$lh/Library/LaunchAgents" \
+         "$lh/.local/share/hookline" "$sandbox/stub-bin"
+printf '#!/bin/bash\necho "launchctl CALLED" >&2\nexit 0\n' > "$sandbox/stub-bin/launchctl"
+chmod +x "$sandbox/stub-bin/launchctl"
+out="$(env HOME="$lh" OSTYPE=linux-gnu PATH="$sandbox/stub-bin:$PATH" HOOKLINE_SANDBOX=0 \
+       bash "$REPO/install.sh" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then echo "PASS linux-guard-rc rc=$rc"; PASS=$((PASS + 1))
+else echo "FAIL linux-guard-rc rc=0"; FAIL=$((FAIL + 1)); fi
+contains "linux-guard-message" "$out" "supports macOS only"
+absent "linux-guard-launchctl-stub" "$out" "launchctl CALLED"
+not_exists "linux-guard-no-config" "$lh/.config/hookline/config"
+not_exists "linux-guard-no-plist" "$lh/Library/LaunchAgents/com.hookline.daemon.plist"
+not_exists "linux-guard-no-hook" "$lh/.local/share/hookline/hooks/hookline.sh"
+
 echo
 echo "install-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

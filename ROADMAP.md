@@ -56,11 +56,12 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 ## Recommended Next 3
 
 1. **Long question lists — chunked/compressed bodies** (~1–2h) — Phase 6 item
-2. **Version / upgrade check** (~0.5–1h) — Phase 6 item
-3. **One-line install** (~1–2h) — Phase 6 item
+2. **Multi-session targeting (bare terminals)** (~4–8h) — Phase 8 item
+3. **grok adapter** (~3–4h) — Phase 6 item, awaits a go decision
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> Version check and one-line install shipped 2026-09-29 (unreleased — in `[Unreleased]`).
 > grok adapter (Phase 6) awaits a go decision; Phase 7 remote control + E2E need
 > on-device human steps.
 
@@ -75,6 +76,8 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 > Items 1–3 (pattern CLI, CONTRIBUTING, in-repo git hooks) shipped 2026-09-29 in
 > **v1.7.0**; item 5 (question-dialog phone flow) shipped 2026-09-29 in **v1.6.0**;
+> items 2–3 below (one-line install, version check) shipped 2026-09-29 (unreleased —
+> in `[Unreleased]`, incl. the non-macOS install fail-fast guard);
 > the internal link check shipped 2026-09-25 with `check-docs` (stale entry — probe-verified
 > 2026-09-29). Details in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
@@ -85,16 +88,15 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
      codex's decline trick
    - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
 
-2. **One-line install** (~1–2h)
-   - README install is `git clone` + `just install`; a `curl -fsSL … | bash` path from a pinned
-     GitHub release shortens the 5-minute install goal (release tarball or raw-GitHub fetch —
-     `install.sh` today assumes repo-relative files)
-   - Acceptance: fresh machine install with no git checkout of the repo
+2. **One-line install** (~1–2h) — ✅ shipped 2026-09-29 (unreleased), incl. the
+   non-macOS fail-fast guard; `curl -fsSL … | bash` → tagged release tarball → `install.sh`
+   - Acceptance met: fresh machine install with no git checkout of the repo
+     (`scripts/get-test.sh` — 11 offline cases)
 
-3. **Version / upgrade check** (~0.5–1h)
-    - `hookline status` (and/or `doctor`) flags when the latest GitHub release tag is newer than
-      the installed `VERSION` — release-smoke already fetches the latest tag, reuse that
-    - Acceptance: outdated install reports the newer tag; up-to-date install stays quiet
+3. **Version / upgrade check** (~0.5–1h) — ✅ shipped 2026-09-29 (unreleased)
+    - `hookline status` flags when the latest GitHub release tag is newer than the
+      installed `VERSION` (recorded by `install.sh`)
+    - Acceptance met: outdated install reports the newer tag; endpoint-down stays quiet
 
 4. **Long question lists — chunked/compressed bodies** (~1–2h)
     - Today the notification body truncates at 1500 chars, so a question with a long option

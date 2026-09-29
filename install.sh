@@ -23,6 +23,15 @@ SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 # shellcheck source=/dev/null
 source "${HOOK_SRC_DIR}/adapters/claude.sh"   # for ADAPTER_MATCHER
 
+# Fail fast off macOS before writing anything — launchd registration and
+# osascript keystroke injection are macOS-only (Linux support is tracked in
+# ROADMAP Phase 9). HOOKLINE_SANDBOX=1 keeps the Linux CI install tests green.
+if [[ "${OSTYPE:-}" != darwin* ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]]; then
+  echo "Error: hookline supports macOS only (Linux support is tracked in ROADMAP.md Phase 9)." >&2
+  echo "Nothing was installed." >&2
+  exit 1
+fi
+
 echo "=== hookline installer ==="
 echo
 
@@ -51,7 +60,9 @@ fi
 
 if [ -z "$HOOKLINE_TOPIC" ]; then
   echo -n "Enter ntfy topic name (leave blank to generate): "
-  read -r topic
+  # EOF (piped install, no tty) → empty topic → generate one below; without
+  # `|| true` set -e would abort here.
+  read -r topic || true
   if [ -z "$topic" ]; then
     topic="hookline-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12)"
     echo "Generated topic: $topic"

@@ -29,6 +29,19 @@ Each provider plugs into a provider-neutral core through an adapter: Claude Code
 
 ## Install
 
+One-liner (downloads the latest release, no clone needed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tsyche/hookline/main/get.sh | bash
+```
+
+The one-liner never installs silently-unreviewed code: it fetches a tagged
+release tarball, extracts it to a temp dir, and runs that release's own
+`install.sh` — same file you would get from a clone. Piping still prompts for
+the ntfy topic on your terminal (stdin is re-attached to your tty).
+
+Or from a clone:
+
 ```bash
 git clone https://github.com/tsyche/hookline.git
 cd hookline
@@ -193,6 +206,7 @@ just doctor-test    # sandboxed `hookline doctor` report tests
 just status-test    # sandboxed `hookline status` report tests
 just patterns-test  # sandboxed `hookline patterns`/`remove-pattern`/`clear-patterns` tests
 just install-test   # sandboxed install/uninstall round-trip tests
+just get-test       # sandboxed get.sh one-line install tests (file:// tarball)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 bash scripts/test.sh
 ```

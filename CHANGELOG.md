@@ -9,6 +9,12 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 ### Added
 
 - `hookline status` version check — compares the installed version (recorded by `install.sh` as `~/.local/share/hookline/VERSION`) against the latest GitHub release tag and flags the upgrade; degrades quietly when the endpoint is unreachable, and `HOOKLINE_LATEST_RELEASE_URL` overrides the endpoint so tests stay offline
+- One-line install — `curl -fsSL https://raw.githubusercontent.com/tsyche/hookline/main/get.sh | bash` resolves the latest GitHub release (or `HOOKLINE_VERSION`), downloads the tagged tarball to a temp dir, and runs its `install.sh`; the topic prompt re-attaches to the terminal via `/dev/tty`, and `HOOKLINE_TARBALL_BASE` lets tests run offline (`scripts/get-test.sh`, 11 cases)
+
+### Fixed
+
+- installer aborts immediately on non-macOS hosts — an unguarded `launchctl` hit `set -e` mid-install on Linux, leaving a partial install with no message; `install.sh` and `get.sh` now fail fast up front with a pointer to ROADMAP Phase 9 (Linux support), before writing anything; `HOOKLINE_SANDBOX=1` keeps the Linux CI install tests running
+- topic prompt survives piped installs — `read` returning non-zero on EOF no longer killed `install.sh` under `set -e` before the topic could be generated
 
 ## [1.7.1] - 2026-09-29
 

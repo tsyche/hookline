@@ -49,6 +49,7 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   `scripts/status-test.sh` — sandboxed status report tests;
   `scripts/patterns-test.sh` — sandboxed pattern-CLI tests;
   `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
+  `scripts/get-test.sh` — sandboxed get.sh one-line install tests (file:// tarball, no network);
   `scripts/release-smoke-test.sh` — sandboxed release smoke check tests).
   Install/uninstall honor `HOOKLINE_SANDBOX=1` (no launchctl, no `/usr/local/bin`).
   `just check-gates` runs every gate CI runs (`ci.yml` calls it — keep both in sync
@@ -68,6 +69,7 @@ just status-test    # sandboxed `hookline status` report tests (no network, no l
 just patterns-test  # sandboxed pattern-CLI tests (`patterns`/`remove-pattern`/`clear-patterns`)
 just hooks          # enable in-repo .githooks (pre-commit check-docs, pre-push check-gates)
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd)
+just get-test       # sandboxed get.sh one-line install tests (fake HOME, no network, no launchd)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 just status         # config, daemon status, connectivity, recent log
 just lint           # shellcheck the shell scripts + py_compile the Python files
