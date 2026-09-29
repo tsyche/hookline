@@ -52,8 +52,8 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 ## Recommended Next 3
 
 1. **Pattern management CLI** (~2–3h) — `hookline patterns` / `remove-pattern` / `clear-patterns` — committed, pending release
-2. **CONTRIBUTING.md** (~1–2h) — adapters, backend, testing, PR process
-3. **In-repo git hooks** (~1h) — vendor `.githooks/` so fresh clones get `check-docs` locally
+2. **CONTRIBUTING.md** (~1–2h) — adapters, backend, testing, PR process — committed, pending release
+3. **In-repo git hooks** (~1h) — vendored `.githooks/` + `just hooks` — committed, pending release
 
 > Previous recommended 3 (`check-gates`, opencode plugin tests, setup wizard) all shipped
 > 2026-09-28 — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
@@ -73,13 +73,13 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
    - `hookline clear-patterns [--global]` — wipe project allowlist (global only with `--global`)
    - covered by `just patterns-test` (15 sandboxed cases, in `check-gates`)
 
-2. **CONTRIBUTING.md** (~1–2h)
+2. **CONTRIBUTING.md** (~1–2h) — committed, pending release
    - How to add a notification backend, how to add a provider adapter, how to test the hook locally (`just lint && just golden && just check-docs`), PR process
    - CI half of the original item is done: lint + golden + check-docs run on push/PR; Dependabot grouped monthly for `github-actions`
 
-3. **In-repo git hooks** (~1h)
-   - The `check-docs` pre-commit hook currently runs from machine-local `~/.git-hooks` via a global `core.hooksPath` — contributors (and any fresh clone) never get it
-   - Vendor `.githooks/` in the repo plus a `hooks` recipe (and a CONTRIBUTING line); CI already gates the same checks, this closes the local-feedback gap
+3. **In-repo git hooks** (~1h) — committed, pending release
+   - The `check-docs` pre-commit hook previously ran from machine-local `~/.git-hooks` via a global `core.hooksPath` — contributors (and any fresh clone) never got it
+   - Shipped: vendored `.githooks/` (pre-commit = doc sync + `check-docs`, pre-push = `check-gates`) enabled via `just hooks`, documented in CONTRIBUTING; CI already gates the same checks
 
 4. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
    [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md)); not approved/built

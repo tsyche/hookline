@@ -66,6 +66,7 @@ just test-plugin    # opencode plugin unit tests (node --test, fake SDK client)
 just doctor-test    # sandboxed `hookline doctor` report tests (no network, no launchd)
 just status-test    # sandboxed `hookline status` report tests (no network, no launchd)
 just patterns-test  # sandboxed pattern-CLI tests (`patterns`/`remove-pattern`/`clear-patterns`)
+just hooks          # enable in-repo .githooks (pre-commit check-docs, pre-push check-gates)
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 just status         # config, daemon status, connectivity, recent log

@@ -1,0 +1,19 @@
+#!/bin/bash
+# In-repo pre-commit: keep CLAUDE.md in sync with AGENTS.md, then run the
+# docs gate so drift is caught before CI. Enable with `just hooks`
+# (sets repo-local core.hooksPath=.githooks). Bypass: --no-verify.
+
+if [ -f AGENTS.md ]; then
+  cp AGENTS.md CLAUDE.md
+  git add CLAUDE.md
+fi
+
+# Checks the working tree, not just the staged snapshot. Repos without a
+# `check-docs` recipe skip it (this file may be copied between repos).
+if command -v just >/dev/null 2>&1 &&
+  just --summary 2>/dev/null | tr ' ' '\n' | grep -qx check-docs; then
+  if ! just check-docs; then
+    echo "pre-commit: 'just check-docs' failed; fix the docs or commit with --no-verify" >&2
+    exit 1
+  fi
+fi

@@ -183,6 +183,7 @@ hung daemon automatically.
 ## Test
 
 ```bash
+just hooks         # enable in-repo git hooks (pre-commit doc sync, pre-push gates)
 just check-gates  # every gate CI runs, in one command (the single source of truth)
 just lint         # shellcheck the shell scripts + py_compile the Python files
 just golden         # hook stdout contract tests (sandboxed, no network)
@@ -253,6 +254,11 @@ See [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control) for au
 - **Extended window** — late answers still land for up to an hour after the phone timeout
 - **Fallback mode** — works without the daemon via inline polling
 - **Multi-provider registry** — Claude, Codex, OpenCode, and adapter-shaped future agents behind one core
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — local testing (`just check-gates`),
+how to add a provider adapter or notification backend, and the PR process.
 
 ## License
 

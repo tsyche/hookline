@@ -1,0 +1,14 @@
+#!/bin/bash
+# In-repo pre-push: run the full gate suite before code leaves the machine.
+# CI runs the same recipe, so this only shortens the feedback loop.
+# Enable with `just hooks`. Bypass: `git push --no-verify`.
+
+if command -v just >/dev/null 2>&1 &&
+  just --summary 2>/dev/null | tr ' ' '\n' | grep -qx check-gates; then
+  if ! just check-gates; then
+    echo "pre-push: 'just check-gates' failed — fix the gates or push with --no-verify" >&2
+    exit 1
+  fi
+else
+  echo "pre-push: no 'check-gates' recipe (or just not installed) — skipping" >&2
+fi

@@ -39,7 +39,7 @@ daemon-restart:
 # Lint shell scripts (shellcheck) and syntax-check the Python daemon
 lint:
     @command -v shellcheck >/dev/null || { echo "shellcheck not installed — run: brew install shellcheck"; exit 1; }
-    shellcheck hooks/hookline.sh hooks/core.sh hooks/adapters/*.sh install.sh uninstall.sh hookline scripts/*.sh
+    shellcheck hooks/hookline.sh hooks/core.sh hooks/adapters/*.sh install.sh uninstall.sh hookline scripts/*.sh .githooks/pre-commit .githooks/pre-push
     /usr/bin/python3 -m py_compile daemon/hookline-daemon daemon/watchdog.py tests/*.py
     @echo "lint ok"
 
@@ -90,6 +90,11 @@ release-smoke-test:
 # Promote CHANGELOG [Unreleased] → current VERSION entry (run before bumping VERSION)
 changelog-promote:
     bash scripts/changelog-promote.sh
+
+# Enable the in-repo git hooks (pre-commit doc sync + check-docs, pre-push gates)
+hooks:
+    git config core.hooksPath .githooks
+    @echo "core.hooksPath -> .githooks (pre-commit: check-docs, pre-push: check-gates)"
 
 # Sync CLAUDE.md <-> AGENTS.md (copy whichever is newer onto the other)
 sync-docs:
