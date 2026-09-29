@@ -88,7 +88,7 @@ grep -qF '"Bash(just lint)"' <<<"$left" || ok=0
 grep -qF '"model": "opus"' <<<"$left" || ok=0
 grep -qF '"Bash(git status*)"' <<<"$left" && ok=0
 report "remove-keeps-siblings" "$ok"
-mode=$(stat -f '%Lp' "$w/.claude/settings.local.json" 2>/dev/null || stat -c '%a' "$w/.claude/settings.local.json")
+mode=$(stat -c '%a' "$w/.claude/settings.local.json" 2>/dev/null || stat -f '%Lp' "$w/.claude/settings.local.json" 2>/dev/null)
 if [ "$mode" = "644" ]; then OUT=$mode; report "remove-preserves-mode" 1
 else OUT=$mode; report "remove-preserves-mode" 0; fi
 

@@ -135,14 +135,20 @@ pattern_check_json() {
 pattern_apply() { # pattern_apply <file> <jq args...>
   local file="$1" tmp mode
   shift
-  mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file" 2>/dev/null)
+  # GNU stat -c first (BSD stat -c errors → fallback): `stat -f` on GNU means
+  # "filesystem status" and succeeds with garbage, so it must not come first.
+  mode=$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null)
   tmp=$(mktemp "$(dirname "$file")/.hookline-pattern.XXXXXX")
   if ! jq "$@" "$file" > "$tmp"; then
     rm -f "$tmp"
     echo "error: failed to edit $file" >&2
     return 1
   fi
-  [ -n "$mode" ] && chmod "$mode" "$tmp"
+  if [ -n "$mode" ] && ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    echo "error: failed to set mode on $file" >&2
+    return 1
+  fi
   mv "$tmp" "$file"
 }
 
