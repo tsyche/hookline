@@ -6,6 +6,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-29
+
 ### Fixed
 
 - pattern edits preserve file mode on Linux — `stat -f` (BSD format) silently returned filesystem info on GNU coreutils, so mode restoration no-op'd and edited settings files fell back to `0600`; GNU `stat -c` is tried first and a failed `chmod` now aborts the edit (caught by `patterns-test` in CI on the v1.7.0 push)
@@ -84,7 +86,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 - Release automation (VERSION-triggered release workflow, release-smoke CI) and the shipped roadmap ledger
 - First tagged release (earlier milestones: v1.1 stable, v1.2 core — shipped untagged in 2026-06)
 
-[Unreleased]: https://github.com/tsyche/hookline/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/tsyche/hookline/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/tsyche/hookline/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tsyche/hookline/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tsyche/hookline/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tsyche/hookline/compare/v1.4.0...v1.5.0
