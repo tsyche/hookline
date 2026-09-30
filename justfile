@@ -60,7 +60,7 @@ test-plugin:
     node --test tests/test_plugin.mjs
 
 # Run every gate CI runs — the single source of truth for local + CI checks
-check-gates: lint golden test-daemon test-plugin doctor-test status-test patterns-test snooze-test install-test get-test focus-test release-smoke-test check-docs
+check-gates: lint golden test-daemon test-plugin doctor-test status-test patterns-test snooze-test install-test get-test focus-test screen-test release-smoke-test check-docs
     @echo "all gates passed"
 
 # Sandboxed checks for `hookline doctor` (fake HOME, no network, no launchd)
@@ -78,6 +78,10 @@ get-test:
 # Sandboxed checks for bare-terminal focus targeting (dry-run, no osascript/wezterm)
 focus-test:
     bash scripts/focus-test.sh
+
+# Sandboxed screen-capture checks for the grok card read (fake osascript/wezterm/tmux)
+screen-test:
+    bash scripts/screen-test.sh
 
 # Sandboxed checks for the pattern-management commands (fake HOME, no network)
 patterns-test:

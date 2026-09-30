@@ -70,6 +70,7 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
   `scripts/get-test.sh` — sandboxed get.sh one-line install tests (file:// tarball, no network);
   `scripts/focus-test.sh` — sandboxed bare-terminal focus-targeting tests (dry-run, no osascript);
+  `scripts/screen-test.sh` — sandboxed bare-terminal screen-capture tests (fake osascript/wezterm/tmux, no Accessibility);
   `scripts/release-smoke-test.sh` — sandboxed release smoke check tests).
   Install/uninstall honor `HOOKLINE_SANDBOX=1` (no launchctl/systemctl, no `/usr/local/bin`)
   and pin the platform via `HOOKLINE_INIT_SYSTEM`; `HOOKLINE_CLI_DIR` redirects the CLI
@@ -94,6 +95,7 @@ just hooks          # enable in-repo .githooks (pre-commit check-docs, pre-push 
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd/systemd)
 just get-test       # sandboxed get.sh one-line install tests (fake HOME, no network, no init system)
 just focus-test     # sandboxed bare-terminal focus-targeting tests (dry-run, no osascript)
+just screen-test    # sandboxed bare-terminal screen-capture tests (fake osascript/wezterm/tmux)
 just release-smoke-test # sandboxed release smoke check tests (fake gh, no network)
 just status         # config, daemon status, connectivity, recent log
 just lint           # shellcheck the shell scripts + py_compile the Python files

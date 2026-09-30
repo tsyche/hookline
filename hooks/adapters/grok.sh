@@ -160,17 +160,40 @@ grok_allow_digit() {
   sed -nE 's/^[^0-9]*([0-9]+) \([^)]*\) (Yes, proceed|Yes|allow once)[^A-Za-z0-9]*$/\1/p' | head -1
 }
 
-# Screenshot of the card's pane/screen ("" = unreadable).
+# Screenshot of the card's pane/screen ("" = unreadable). tmux first, then the
+# bare-terminal backends: iTerm2 session contents, Terminal.app selected tab,
+# WezTerm focused pane (WEZTERM_PANE when set, else the focused pane from
+# `wezterm cli list`). Unknown terminals, a missing wezterm binary, or a
+# failed read echo nothing — callers must treat "" as "no screen" and inject
+# nothing (the prompt stays for the user to answer by hand).
 grok_screen() {
+  local pane
   if [ -n "${TMUX_PANE:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null
-  elif [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
-    osascript 2>/dev/null <<'EOF'
+    return
+  fi
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app)
+      osascript 2>/dev/null <<'EOF'
 tell application "iTerm2"
   tell current session of current window to get contents
 end tell
 EOF
-  fi
+      ;;
+    Apple_Terminal)
+      osascript -e 'tell application "Terminal" to get contents of selected tab of front window' 2>/dev/null
+      ;;
+    WezTerm)
+      command -v wezterm >/dev/null 2>&1 || return 0
+      pane="${WEZTERM_PANE:-}"
+      if [ -z "$pane" ]; then
+        pane=$(wezterm cli list --format json 2>/dev/null \
+          | jq -r '[.[] | select(.is_focused == true)][0].pane_id // empty' 2>/dev/null)
+      fi
+      [ -n "$pane" ] || return 0
+      wezterm cli get-text --pane-id "$pane" 2>/dev/null
+      ;;
+  esac
 }
 
 # allow   → parse the allow-once digit off the card and type it (Enter would
