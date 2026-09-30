@@ -98,6 +98,10 @@ CONTEXT_LINE_CHARS     = 400   # transcript JSONL lines can be tens of KB
 CONTEXT_BUDGET         = 1500  # same body budget as question rendering
 CONTEXT_DEFAULT_TIMEOUT = 45
 
+# typed-reply picker: with 2+ prompts pending a bare reply parks the chosen
+# prompt (or the original reply) for PICK_TTL seconds until the user picks
+PICK_TTL = 180
+
 
 def _find_bin(name):
     """Absolute path for a CLI — launchd gives the daemon a minimal PATH."""
@@ -283,6 +287,13 @@ class Daemon:
         # req_id → option labels for single-select questions, so a typed
         # response-topic reply ("4" / "D") can map back to a label
         self.question_options = {}
+        # disambiguation state for bare replies with 2+ prompts pending:
+        # pick_req = prompt chosen by an earlier "1"/"2" reply; queued =
+        # (text, low) waiting to apply once a prompt is picked
+        self.pick_req = ''
+        self.pick_ts = 0.0
+        self.queued = None
+        self.queued_ts = 0.0
         self.lock     = threading.Lock()
         self._stop    = threading.Event()
 
@@ -427,14 +438,15 @@ class Daemon:
     def handle_typed_reply(self, text):
         """Bare reply from the ntfy app: number/letter option, or word.
 
-        Words: "retry"/"deny" route to any single pending prompt (question
-        reject works the same as permission deny); "allow" only fits
-        permission prompts — on a question it gets invalid-reply feedback.
-        Option pick: resolves to answer|<label> only when exactly one
-        question with an option list is pending. Anything else that looks
-        like an attempt (exactly one question pending) pushes a feedback
-        notification with Retry/Deny buttons; ambiguous replies are logged
-        and dropped.
+        Words: "retry"/"deny" route to the pending prompt (question reject
+        works the same as permission deny); "allow" only fits permission
+        prompts — on a question it gets invalid-reply feedback. Option pick:
+        resolves to answer|<label> against the target prompt.
+
+        With exactly one prompt pending the reply applies directly. With 2+
+        pending the reply is ambiguous: it parks the attempt (or, for a
+        1..N number, selects a prompt) and pushes a picker notification —
+        reply `1`/`2` to choose the prompt first, then the option/word.
         """
         low = text.lower()
 
@@ -453,49 +465,37 @@ class Daemon:
                 self._handle_snooze_reply(low)
             return
 
-        if low in ('allow', 'deny', 'retry'):
-            with self.lock:
-                pend = list(self.pending)
-            if len(pend) != 1:
-                self.log.info(
-                    f"word reply {low!r}: {len(pend)} prompt(s) pending, ignoring"
-                )
-                return
-            req_id = pend[0]
-            if low == 'allow':
-                with self.lock:
-                    is_question = req_id in self.question_options
-                if is_question:
-                    with self.lock:
-                        options = list(self.question_options.get(req_id, []))
-                    self._invalid_reply(req_id, text, options)
-                    return
-                self.handle_response(req_id, 'allow')
-            else:
-                self.handle_response(req_id, low)
+        with self.lock:
+            pend = list(self.pending)
+        if not pend:
+            self.log.info(f"typed reply {text!r}: no pending prompt, ignoring")
             return
+        if len(pend) > 1:
+            self._disambiguate(text, low, pend)
+            return
+        self._apply_reply(pend[0], text, low)
 
+    def _apply_reply(self, req_id, text, low):
+        """Apply a bare reply to one specific pending prompt (single-prompt
+        semantics). Returns False if the prompt vanished meanwhile."""
         with self.lock:
-            candidates = [r for r in self.question_options if r in self.pending]
-        if len(candidates) != 1:
-            self.log.info(
-                f"typed reply {text!r}: {len(candidates)} question(s) with "
-                "options pending, ignoring"
-            )
-            return
-        req_id = candidates[0]
-        with self.lock:
+            if req_id not in self.pending:
+                return False
+            is_question = req_id in self.question_options
             options = list(self.question_options.get(req_id, []))
-        label = None
-        if len(text) == 1:
-            if text.isdigit():
-                idx = int(text) - 1
-            elif text.isalpha() and text.isascii():
-                idx = ord(text.lower()) - ord('a')
-            else:
-                idx = -1
-            if 0 <= idx < len(options):
-                label = options[idx]
+        if low in ('allow', 'deny', 'retry'):
+            if low == 'allow' and is_question:
+                self._invalid_reply(req_id, text, options)
+                return True
+            self.handle_response(req_id, low)
+            return True
+        if not is_question:
+            self.log.info(
+                f"[{req_id[:16]}] typed reply {text!r}: "
+                "not a question, ignoring"
+            )
+            return True
+        label = self._option_label(text, options)
         if label is None:
             self.log.info(
                 f"[{req_id[:16]}] typed reply {text!r} not in "
@@ -503,8 +503,102 @@ class Daemon:
             )
             if text:   # empty body is not an attempt — nothing to correct
                 self._invalid_reply(req_id, text, options)
-            return
+            return True
         self.handle_response(req_id, f"answer|{label}")
+        return True
+
+    @staticmethod
+    def _option_label(text, options):
+        """Single-character option pick → its label, else None."""
+        if len(text) != 1:
+            return None
+        if text.isdigit():
+            idx = int(text) - 1
+        elif text.isalpha() and text.isascii():
+            idx = ord(text.lower()) - ord('a')
+        else:
+            return None
+        if 0 <= idx < len(options):
+            return options[idx]
+        return None
+
+    def _disambiguate(self, text, low, pend):
+        """Bare reply while 2+ prompts are pending: picker flow.
+
+        A stored pick routes this reply to the chosen prompt. Otherwise a
+        1..N number selects a prompt (applying any queued reply to it at
+        the same time) and stores the pick; any other reply parks itself
+        as queued and pushes the picker list.
+        """
+        now = time.time()
+        with self.lock:
+            pick = self.pick_req
+            if pick and (pick not in pend or now - self.pick_ts > PICK_TTL):
+                pick = ''
+                self.pick_req = ''
+            queued = self.queued
+            if queued and now - self.queued_ts > PICK_TTL:
+                queued = None
+                self.queued = None
+
+        if pick:
+            with self.lock:   # one reply per pick
+                self.pick_req = ''
+            self._apply_reply(pick, text, low)
+            return
+
+        idx = int(text) if text.isdigit() else -1
+        if 1 <= idx <= len(pend):
+            req = pend[idx - 1]
+            if queued:
+                qtext, qlow = queued
+                with self.lock:
+                    self.queued = None
+                self._apply_reply(req, qtext, qlow)
+            else:
+                with self.lock:
+                    self.pick_req = req
+                    self.pick_ts = now
+                self._push_picker_note(req, idx)
+            return
+
+        # not a picker number: park the reply, ask which prompt it means
+        with self.lock:
+            self.queued = (text, low)
+            self.queued_ts = now
+        self._push_picker(pend, queued=text)
+
+    def _prompt_line(self, req_id, idx):
+        """One numbered picker line: title + prompt kind."""
+        with self.lock:
+            session = self.sessions.get(self.pending.get(req_id, ''), {})
+            kind = ('question' if req_id in self.question_options
+                    else 'permission')
+        title = session.get('notify_title') or 'hookline'
+        return f"{idx}. {title} ({kind})"
+
+    def _push_picker(self, pend, queued=''):
+        """Which-prompt notification: numbered list + how the parked reply
+        will apply once a pick arrives."""
+        body = "\n".join(
+            self._prompt_line(r, i) for i, r in enumerate(pend, 1)
+        )
+        if queued:
+            body += (f"\n\nReply 1-{len(pend)} to pick the prompt — your "
+                     f"'{queued}' applies to it.")
+        else:
+            body += (f"\n\nReply 1-{len(pend)} to pick the prompt first, "
+                     "then send your answer.")
+        self.send_ntfy(load_config(), 'hookline — which prompt?', body,
+                       pend[-1], [], force=True)
+
+    def _push_picker_note(self, req_id, idx):
+        """Confirmation after a bare pick: what to send next."""
+        line = self._prompt_line(req_id, idx)
+        body = (f"Picked {line}\n\nNow send your answer: the option's "
+                "number/letter, allow, deny, or retry — or type context.")
+        self.send_ntfy(load_config(), 'hookline — prompt picked', body,
+                       req_id, [], force=True)
 
     def _invalid_reply(self, req_id, text, options):
         """Push a correction notification for a reply that didn't resolve.

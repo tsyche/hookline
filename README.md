@@ -89,7 +89,10 @@ Use your agent normally. When a permission prompt fires:
 
 You can also type a reply in the ntfy channel instead of tapping: `allow`,
 `deny`, or `retry` work anywhere a button would, and `context` (see below)
-summarizes the session when you've lost the thread.
+summarizes the session when you've lost the thread. With several prompts
+pending at once a bare reply first pushes a picker listing each one — reply
+`1`/`2` to choose the prompt (your original reply applies to it), then send
+the option/word as usual.
 
 ### Alert metadata
 

@@ -431,7 +431,7 @@ class TestSseAnswerRouting(unittest.TestCase):
 
 class TestTypedReply(unittest.TestCase):
     """Bare replies from the ntfy app: option number/letter, retry/allow/deny
-    words, and invalid-reply feedback. Ambiguous replies are dropped."""
+    words, invalid-reply feedback, and the multi-prompt picker flow."""
 
     def setUp(self):
         self.d = daemon_mod.Daemon()
@@ -538,16 +538,24 @@ class TestTypedReply(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)
         self.assertIn("r1", self.d.pending)
 
-    def test_word_reply_needs_exactly_one_pending(self):
+    def test_word_reply_with_two_pending_asks_which_prompt(self):
         with self.arm():
             self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
             self.d.pending["r2"] = "s2"
             self.d.handle_typed_reply("retry")
             self.d.handle_typed_reply("deny")
         self.assertEqual(self.handled, [])
-        self.assertEqual(self.sent, [])
+        self.assertEqual(len(self.sent), 2)      # picker pushed per attempt
+        title, msg, req, actions = self.sent[-1]
+        self.assertEqual(title, "hookline — which prompt?")
+        self.assertIn("1. [label] question (question)", msg)
+        self.assertIn("2. hookline (permission)", msg)
+        self.assertIn("your 'deny' applies to it", msg)
+        self.assertEqual(req, "r2")
+        self.assertIn("r1", self.d.pending)      # nothing resolved
+        self.assertIn("r2", self.d.pending)
 
-    def test_two_questions_pending_ambiguous_ignored(self):
+    def test_two_questions_pending_number_queues_and_asks(self):
         p1 = self.arm()
         with p1:
             self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
@@ -555,7 +563,71 @@ class TestTypedReply(unittest.TestCase):
             self.d.question_options["r2"] = ["Yes", "No"]
             self.d.handle_typed_reply("4")
         self.assertEqual(self.handled, [])
-        self.assertEqual(self.sent, [])       # ambiguous — no feedback either
+        self.assertEqual(len(self.sent), 1)
+        title, msg, req, actions = self.sent[0]
+        self.assertEqual(title, "hookline — which prompt?")
+        self.assertIn("Reply 1-2 to pick the prompt", msg)
+        self.assertIn("your '4' applies to it", msg)
+
+    def test_pick_then_option_resolves_the_chosen_question(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.question_options["r2"] = ["Yes", "No"]
+            self.d.handle_typed_reply("1")           # pick prompt 1
+            self.d.handle_typed_reply("4")           # option for it
+        self.assertEqual(self.handled, [("r1", "answer|Four")])
+        title, msg, req, actions = self.sent[-1]
+        self.assertEqual(title, "hookline — prompt picked")
+        self.assertIn("1. [label] question", msg)
+
+    def test_queued_word_applies_to_picked_prompt(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.handle_typed_reply("deny")        # parked, picker shown
+            self.d.handle_typed_reply("2")           # pick prompt 2 → applies
+        self.assertEqual(self.handled, [("r2", "deny")])
+        self.assertEqual(len(self.sent), 1)          # only the picker
+        self.assertIn("r1", self.d.pending)
+
+    def test_pick_routes_word_to_chosen_prompt(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.handle_typed_reply("2")           # pick prompt 2
+            self.d.handle_typed_reply("retry")
+        self.assertEqual(self.handled, [("r2", "retry")])
+        self.assertEqual(self.d.pending, {"r1": "s1", "r2": "s2"})
+
+    def test_allow_on_picked_question_gets_invalid_reply(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.handle_typed_reply("1")           # pick the question
+            self.d.handle_typed_reply("allow")       # not a question answer
+        self.assertEqual(self.handled, [])
+        title, msg, req, actions = self.sent[-1]
+        self.assertIn("invalid reply", title)
+        self.assertEqual(req, "r1")
+        self.assertEqual([a["payload"] for a in actions], ["retry", "deny"])
+
+    def test_stale_pick_is_cleared_before_resolving(self):
+        p1 = self.arm()
+        with p1:
+            self.d.sessions["s2"] = {"response_file": "/tmp/r2"}
+            self.d.pending["r2"] = "s2"
+            self.d.handle_typed_reply("1")           # pick prompt 1
+            self.d.pick_ts -= 600                    # age it past PICK_TTL
+            self.d.handle_typed_reply("2")           # fresh: picks r2
+        self.assertEqual(self.handled, [])           # (a live pick would
+        title, msg, req, actions = self.sent[-1]     #  answer r1 with "Two")
+        self.assertEqual(title, "hookline — prompt picked")
+        self.assertIn("2. hookline (permission)", msg)
 
     def test_permission_prompt_ignored(self):
         # no options stored (permission notify) → nothing to resolve against
