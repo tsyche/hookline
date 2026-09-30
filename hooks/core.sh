@@ -69,6 +69,40 @@ finally:
   [[ "$resp" == *'"pid"'* ]]
 }
 
+# Equal-share fit: shrink a rendered question body to <= budget chars without
+# dropping any numbered option line. Non-option lines (headers, blanks) are
+# capped at a third of the budget first; every option line then shares the
+# remainder equally, truncated with "..." when too long. Prints nothing when
+# even the prefixes cannot fit — the caller falls back to a hard cut.
+fit_question_body() {
+  awk -v B="$1" '
+    { L[++n] = $0; if ($0 ~ /^[0-9]+\. /) opts[++nopt] = n; else other[++nother] = n }
+    END {
+      if (nopt == 0) exit 1
+      olen = 0
+      for (i = 1; i <= nother; i++) olen += length(L[other[i]]) + 1
+      if (olen > int(B / 3)) {
+        share = nother > 0 ? int((B / 3) / nother) : 0
+        if (share < 10) exit 1
+        for (i = 1; i <= nother; i++) {
+          k = other[i]
+          if (length(L[k]) > share - 1) L[k] = substr(L[k], 1, share - 4) "..."
+        }
+        olen = 0
+        for (i = 1; i <= nother; i++) olen += length(L[other[i]]) + 1
+      }
+      per = int((B - olen) / nopt)
+      if (per < 10) exit 1
+      for (i = 1; i <= nopt; i++) {
+        k = opts[i]
+        if (length(L[k]) > per - 1) L[k] = substr(L[k], 1, per - 4) "..."
+      }
+      out = L[1]
+      for (i = 2; i <= n; i++) out = out "\n" L[i]
+      print out
+    }'
+}
+
 # Question dialog → human-readable body (every question, numbered options with
 # descriptions) + optional ntfy action buttons. Provider-neutral: reads
 # `.questions` (opencode question.asked) or `.tool_input.questions` (claude
@@ -80,9 +114,17 @@ finally:
 # terminal. Labels are sanitized (| would corrupt the response-topic format).
 # Sets: NOTIFY_MSG, ADAPTER_OPTIONS (full label list for typed replies),
 # ADAPTER_ACTIONS (button payload list), ADAPTER_NO_ACTIONS=1 (suppress trio).
+#
+# Body budget: the ntfy text cap is 4096 bytes; 1500 chars leaves headroom for
+# the reply hint and ntfy metadata. Over budget the body is compressed once —
+# descriptions dropped, long labels capped — and if that still overflows,
+# equal-share keeps every numbered option visible (a reader must always see
+# what they are picking). The hint + typed-reply option list are built from
+# the raw payload, so answering never depends on the rendered body.
 build_question_message() {
-  local qcount nopts multiple bc=0
-  NOTIFY_MSG=$(echo "$INPUT" | jq -r '
+  local qcount nopts multiple bc=0 body compressed fit
+  local budget=1500
+  body=$(echo "$INPUT" | jq -r '
     def qs: (.questions // .tool_input.questions // []);
     [qs[] |
       ((.header // "Question") + " — " + (.question // "")) +
@@ -91,8 +133,23 @@ build_question_message() {
           "\(.key + 1). \(.value.label): \(.value.description // "")"] | join("\n"))
       else "" end)
     ] | join("\n\n")' 2>/dev/null)
-  [ -n "$NOTIFY_MSG" ] || NOTIFY_MSG="Question (see terminal)"
-  NOTIFY_MSG="${NOTIFY_MSG:0:1500}"   # ntfy text body cap is 4096 bytes
+  [ -n "$body" ] || body="Question (see terminal)"
+  if [ "${#body}" -gt "$budget" ]; then
+    # compressed pass: same layout, descriptions dropped, labels capped at 120
+    compressed=$(echo "$INPUT" | jq -r '
+      def qs: (.questions // .tool_input.questions // []);
+      [qs[] |
+        ((.header // "Question") + " — " + (.question // "")) +
+        (if ((.options // []) | length) > 0 then
+          "\n" + ([.options | to_entries[] |
+            "\(.key + 1). " + ((.value.label // "") |
+              if length > 120 then .[0:117] + "..." else . end)] | join("\n"))
+        else "" end)
+      ] | join("\n\n")' 2>/dev/null)
+    fit=$(printf '%s\n' "$compressed" | fit_question_body "$budget")
+    body="${fit:-${body:0:$budget}}"
+  fi
+  NOTIFY_MSG="$body"
 
   qcount=$(echo "$INPUT" | jq -r '(.questions // .tool_input.questions // []) | length' 2>/dev/null)
   nopts=$(echo "$INPUT" | jq -r '(.questions // .tool_input.questions // [])[0].options | length' 2>/dev/null)

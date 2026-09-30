@@ -15,6 +15,7 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ### Fixed
 
+- long question lists lost their tail options — the notification body hard-truncated at 1500 chars, so a 30-option question could arrive with options cut off; over budget the body now re-renders compressed (descriptions dropped, labels capped at 120 chars) and if still too long `fit_question_body` equal-shares the option lines so every numbered option stays visible; the reply hint and typed-reply label list come from the raw payload, so answering never depended on the render (`scripts/hook-golden.sh` — 3 new cases, 40 total)
 - installer aborts immediately on unsupported platforms — an unguarded `launchctl` hit `set -e` mid-install on Linux, leaving a partial install with no message; `install.sh` and `get.sh` now detect the init system up front (macOS → launchd, Linux with systemd → `systemd`, anything else → fail fast with a pointer to ROADMAP Phase 9) before writing anything; `HOOKLINE_SANDBOX=1` keeps sandboxed tests running on either platform
 - topic prompt survives piped installs — `read` returning non-zero on EOF no longer killed `install.sh` under `set -e` before the topic could be generated
 

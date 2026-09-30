@@ -19,6 +19,7 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.5.0 | 2026-09-27 | tagged release covering the Phase 6 rows below (codex adapter, response-file hardening, MCP matcher, changelog-promote, grok spike) |
 | v1.6.0 | 2026-09-29 | question-dialog phone flow (typed/word replies, extended window), setup wizard, `just check-gates`, opencode plugin tests |
 | v1.7.0 | 2026-09-29 | pattern management CLI, CONTRIBUTING.md, in-repo `.githooks/` + `just hooks` |
+| Phase 6 b3 | 2026-09-29 | unreleased: question-body compression (Route A over-budget fit, 30-option acceptance) |
 
 ## v1.1 — Stable (archived)
 
@@ -257,3 +258,21 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       3 stragglers fixed in tracked docs (CHANGELOG 1.6.0 entry, CONTRIBUTING alias
       example, roadmap question-flow entry); code comments exempt — ids live in untracked
       config + the code that consumes them
+
+## Phase 6 (batch 3) — question-body compression (shipped 2026-09-29, unreleased)
+
+19. **Long question lists — chunked/compressed bodies** — done 2026-09-29 (unreleased)
+    - Gap: the notification body truncated at 1500 chars, so a long option list (or verbose
+      descriptions) lost options at the tail — typing still resolved any number, but the
+      reader couldn't see what they were picking
+    - Shipped Route A (the cheap route): over budget the body re-renders compressed —
+      descriptions dropped, labels capped at 120 chars — and if that still overflows,
+      `fit_question_body` (hooks/core.sh) equal-shares the option lines: headers capped at
+      a third of the budget, every numbered line shares the remainder, too-long lines get
+      "..." — all options always numbered and visible; the reply hint and the typed-reply
+      label list are built from the raw payload, so answering never depends on the render
+    - Route B (split across two ntfy messages) not needed — acceptance met without it
+    - Acceptance met: a 30-option question with descriptions arrives fully visible and
+      answerable by number (`scripts/hook-golden.sh` — 3 new notify-payload cases:
+      compressed 30-opt keeps every option + drops descriptions, long-label equal-share
+      fit stays ≤1500, short question keeps its descriptions; 40 golden cases total)

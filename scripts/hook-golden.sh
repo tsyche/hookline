@@ -329,6 +329,38 @@ run_case_notify_payload "claude-question-notify-options" claude "$CLAUDE_Q3" \
    and (.message | contains("Reply 1-3 (or A-C) to answer"))' \
   "" "$DEFER"
 
+# ── body budget: over 1500 chars the body compresses instead of losing tail
+#    options — descriptions drop first, then option lines equal-share, so a
+#    30-option question always arrives fully numbered and answerable; a short
+#    question keeps its descriptions untouched.
+OPC_Q30=$(jq -nc '{id:"que_golden",sessionID:"golden-1",
+  questions:[{question:"Pick a number",header:"Big",
+    options:[range(1;31) | {label:("Option \(.)"),
+      description:("Long descriptive text for option \(.) that repeats across all thirty options and would blow the old fixed budget")}]}]}')
+
+run_case_notify_payload "opencode-q30-compressed-keeps-all-options" opencode "$OPC_Q30" \
+  '.no_actions == true and (.options | length) == 30
+   and (.message | length) <= 1530
+   and (.message | contains("1. Option 1"))
+   and (.message | contains("30. Option 30"))
+   and (.message | contains("Reply 1-30 to answer"))
+   and ((.message | contains("would blow the old fixed budget")) | not)'
+
+OPC_Q30_LONG=$(jq -nc '{id:"que_golden",sessionID:"golden-1",
+  questions:[{question:"Pick a number",header:"Big",
+    options:[range(1;31) | {label:("Option \(.) " + ([range(0;118) | "X"] | join(""))),
+      description:"desc"}]}]}')
+
+run_case_notify_payload "opencode-q30-long-labels-equal-share" opencode "$OPC_Q30_LONG" \
+  '.no_actions == true and (.options | length) == 30
+   and (.message | length) <= 1530
+   and (.message | contains("1. Option 1 XXX"))
+   and (.message | contains("30. Option 30 XXX"))
+   and ((.message | contains(": desc")) | not)'
+
+run_case_notify_payload "opencode-q3-keeps-descriptions" opencode "$OPC_Q3" \
+  '.message | contains("1. Alpha: first") and contains("3. Gamma: third")'
+
 # run_case_late_answer <name> <provider> <input-json> <setup>
 # Extended-window contract: after PHONE_TIMEOUT the watcher must stay alive
 # (extended wait) and still dispatch an answer written to the response file
