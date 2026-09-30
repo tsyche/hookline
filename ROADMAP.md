@@ -13,7 +13,7 @@
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
 > **claude only**. The revival: the same phone-approval UX for every agent the `ai` alias can
-> launch (claude · codex · opencode · local custom providers — grok a potential later addition)
+> launch (claude · codex · opencode · grok · local custom providers)
 > via a provider registry +
 > adapter architecture. See the archived [multi-provider plan](~/.claude/plans/archive/hookline-multi-provider.md)
 > for decisions, phases, and gates. Shipped phases are archived in the
@@ -45,7 +45,7 @@
 > **v1.7.1 tagged 2026-09-29** — GNU/BSD `stat` fix (patterns mode restore on Linux
 > coreutils) + doc hygiene. **Unreleased on main:** version check, one-line install,
 > bare-terminal multi-session targeting, Linux Tier 1 (systemd install/daemon/watchdog),
-> question-body compression for long option lists.
+> question-body compression for long option lists, grok adapter.
 
 ## Goals
 
@@ -61,17 +61,16 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **grok adapter** (~3–4h) — Phase 6 item, awaits a go decision
-2. **Snooze mode** (~1–2h) — Phase 8 item
-3. **`context` keyword — side-thread assessed summary** (~2–4h) — Phase 6 item
+1. **Snooze mode** (~1–2h) — Phase 8 item
+2. **`context` keyword — side-thread assessed summary** (~2–4h) — Phase 6 item
+3. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 8 item
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 > Version check, one-line install, bare-terminal multi-session targeting, question-body
-> compression, and Linux Tier 1 (systemd) shipped 2026-09-29 (unreleased — in `[Unreleased]`;
-> Tier 1 acceptance run on a fresh Ubuntu box still pending).
-> grok adapter (Phase 6) awaits a go decision; Phase 7 remote control + E2E need
-> on-device human steps.
+> compression, grok adapter, and Linux Tier 1 (systemd) shipped 2026-09-29 (unreleased —
+> in `[Unreleased]`; Tier 1 acceptance run on a fresh Ubuntu box still pending).
+> Phase 7 remote control + E2E need on-device human steps.
 
 ## Phase 5 — Reliability & self-healing (complete)
 
@@ -84,30 +83,13 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 > Items 1–3 (pattern CLI, CONTRIBUTING, in-repo git hooks) shipped 2026-09-29 in
 > **v1.7.0**; item 5 (question-dialog phone flow) shipped 2026-09-29 in **v1.6.0**;
-> items 2–3 below (one-line install, version check) and item 4 (question-body
-> compression) shipped 2026-09-29 (unreleased —
+> one-line install, version check, question-body compression, and the
+> grok adapter shipped 2026-09-29 (unreleased —
 > in `[Unreleased]`, incl. the non-macOS install fail-fast guard);
 > the internal link check shipped 2026-09-25 with `check-docs` (stale entry — probe-verified
 > 2026-09-29). Details in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-1. **grok adapter** (~3–4h) — seam CONFIRMED by spike (grok 1.0.41, archived in the
-   [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md)); not approved/built
-   - Claude-compatible `PreToolUse` hooks in `~/.grok/hooks/*.json` (always-trusted), stdout
-     decisions `allow|deny|ask|defer`; `ask` forces grok's prompt — the Flow A seam without
-     codex's decline trick
-   - Watch-outs: set hook `timeout` ≥ grace period (default 5s); approval-menu key profile unverified
-
-2. **One-line install** (~1–2h) — ✅ shipped 2026-09-29 (unreleased), incl. the
-   non-macOS fail-fast guard; `curl -fsSL … | bash` → tagged release tarball → `install.sh`
-   - Acceptance met: fresh machine install with no git checkout of the repo
-     (`scripts/get-test.sh` — 12 offline cases)
-
-3. **Version / upgrade check** (~0.5–1h) — ✅ shipped 2026-09-29 (unreleased)
-    - `hookline status` flags when the latest GitHub release tag is newer than the
-      installed `VERSION` (recorded by `install.sh`)
-    - Acceptance met: outdated install reports the newer tag; endpoint-down stays quiet
-
-4. **`context` keyword — side-thread assessed summary** (~2–4h)
+1. **`context` keyword — side-thread assessed summary** (~2–4h)
     - Type `context` while a question/permission is pending → a short assessed summary of
       where the conversation stands (not just raw lines) arrives as a new notification; the
       original prompt stays pending and is answered afterwards as usual
@@ -117,6 +99,18 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
       model call fails or times out
     - Acceptance: `context` during a pending prompt returns a ≤10-line summary and the
       original prompt is still answerable by button/typed reply
+
+2. **`hookline doctor` per-provider registration checks** (~0.5h)
+    - `doctor` verifies each enabled provider's registration the way `status` does (grok
+      `~/.grok/hooks/hookline.json`, codex `~/.codex/hooks.json`, opencode plugin file,
+      claude settings entry) — today `status` reports grok/codex but `doctor` doesn't
+    - Acceptance: `scripts/doctor-test.sh` cases for each provider registered/missing
+
+3. **Release the unreleased batch** (~0.5h)
+    - Bump `VERSION` → CI auto-tags and releases everything in `[Unreleased]`
+      (question-body compression, one-line install, version check, grok adapter,
+      bare-terminal multi-session targeting, Linux Tier 1)
+    - 🧑 needs-human: release-timing go decision
 
 ## Phase 7 — Remote control + E2E
 
@@ -145,24 +139,14 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
   - Residual risk (documented): ntfy still sees metadata — timing, sizes, topic name;
     self-hosted ntfy closes that too
   - 🧑 needs-human: key paste and decryption verified in a phone browser
-- [x] **Generic provider naming in app-facing text** — setup/docs/status copy must never
-  name private local providers (use "local" / "custom"); concrete ids stay in untracked
-  config. Applied to README/ROADMAP/ledger 2026-09-25; setup-wizard strings verified clean
-  and agent docs (`AGENTS.md`/`CLAUDE.md`) audited 2026-09-29 — 3 stragglers fixed
-  (CHANGELOG 1.6.0 entry, CONTRIBUTING alias example, roadmap question-flow entry); code
-  comments exempt (ids live in untracked config + the code that consumes them).
 
 ## Phase 8 — Medium-term
 
+- **Bare-terminal screen capture beyond iTerm2** (~1–2h) — watcher-side screenshot
+  parsing (grok allow-once row, claude read) reads iTerm2 session contents only; add
+  Terminal.app / WezTerm capture with the same graceful no-inject fallback (unreadable
+  screen → prompt stays, no keys sent)
 - **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
-- **Multi-session support (bare terminals)** — ✅ shipped 2026-09-29 (unreleased):
-  `focus_prompt_window` (hooks/core.sh) runs before every keystroke injection —
-  iTerm2 selects the window/tab by `TERM_SESSION_ID` UUID (live-probed), WezTerm
-  activates the pane via `wezterm cli activate-pane --pane-id`; Terminal.app /
-  unknown terminals keep the frontmost fallback (no stable id — Window/tab index
-  stays fragile, deliberately untouched); tmux already pane-exact. Watchers inject
-  (both adapters), so the terminal env rides the hook process — no daemon changes.
-  Tests: `scripts/focus-test.sh` (15 dry-run cases, in `check-gates`)
 - **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle

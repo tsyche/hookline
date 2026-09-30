@@ -29,6 +29,19 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   Response-only (`ADAPTER_RESPONSE_ONLY=1`); local-answer signal = session rollout JSONL
   growth. Registered by merging `~/.codex/hooks.json` (foreign hooks preserved; one-time
   `/hooks` trust review).
+- **grok adapter** (`hooks/adapters/grok.sh`) — Bash. Rides grok's claude-compatible
+  `PreToolUse` hooks: `install.sh` merges a `hookline.json` entry into `~/.grok/hooks/`
+  (global hooks are always trusted; foreign hooks preserved); `ask` forces grok's own
+  permission card, safe prefixes and the Claude-settings allowlist defer, questions defer
+  into grok's picker (claude-shaped payload — shared question builder). Response-only
+  (`ADAPTER_RESPONSE_ONLY=1`) because the daemon's tmux keys are claude-specific ("1" would
+  be grok's always-approve row) — the watcher injects: allow = the allow-once row's digit
+  parsed off the pane screenshot (labels/order vary by prompt class; Enter is never safe;
+  parse miss = no injection), deny = Ctrl+C (Esc parks focus), question answer = option
+  digit (auto-advances, auto-submits); outside tmux the screenshot is iTerm2 session
+  contents. Matcher = anchored grok-native names (`run_terminal_command`|`write`|
+  `search_replace`|`ask_user_question` + claude aliases). Local-answer signal = raw
+  `updates.jsonl` line count.
 - **Daemon** (`daemon/hookline-daemon`) — Python (stdlib only), managed by launchd
   (`daemon/com.hookline.daemon.plist`) or, on Linux, systemd user units
   (`daemon/hookline-daemon.service` + `daemon/hookline-watchdog.service` +

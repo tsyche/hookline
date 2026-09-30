@@ -18,7 +18,7 @@ Agent fires hook (PreToolUse / PermissionRequest) or plugin event
             → Adapter resolves the prompt (keystroke injection or reply API)
 ```
 
-Each provider plugs into a provider-neutral core through an adapter: Claude Code via its [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PreToolUse` event), Codex via its [hooks system](https://developers.openai.com/codex/hooks) (`PermissionRequest` event), OpenCode via an auto-loaded plugin, others the same way. A background daemon maintains a persistent SSE connection to ntfy so phone responses arrive instantly.
+Each provider plugs into a provider-neutral core through an adapter: Claude Code via its [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PreToolUse` event), Codex via its [hooks system](https://developers.openai.com/codex/hooks) (`PermissionRequest` event), Grok via its claude-compatible `PreToolUse` hook surface (`~/.grok/hooks/*.json`), OpenCode via an auto-loaded plugin, others the same way. A background daemon maintains a persistent SSE connection to ntfy so phone responses arrive instantly.
 
 ## Requirements
 
@@ -68,6 +68,7 @@ The installer will:
 7. Register the hook in `~/.claude/settings.json` (plus a second Claude-profile settings file when one is present on the machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
 9. Merge the Codex `PermissionRequest` hook into `~/.codex/hooks.json`, when `~/.codex` exists (existing hooks in the file are preserved; review the new hook once inside codex via `/hooks` — codex skips untrusted hooks)
+10. Merge the Grok `PreToolUse` hook into `~/.grok/hooks/hookline.json`, when `~/.grok` exists (existing hooks preserved, config untouched; grok runs global hooks without a trust step)
 
 Then open the ntfy app and subscribe to your topic (and `your-topic-response`).
 
@@ -132,10 +133,10 @@ To permanently allow a tool/command, answer **Yes** at the terminal prompt and s
 `HOOKLINE_PROVIDERS` in config is the whitelist of providers whose hook entries fire:
 
 ```bash
-HOOKLINE_PROVIDERS="claude codex opencode"   # unset = all installed providers enabled
+HOOKLINE_PROVIDERS="claude codex opencode grok"   # unset = all installed providers enabled
 ```
 
-A provider not listed exits its hook silently — that agent behaves as if hookline were absent. Each provider registers its own entry point at install time (`settings.json` hook for Claude-style agents, `hooks.json` merge for Codex, plugin file for OpenCode); the entry calls `hooks/hookline.sh <provider>`, which gates on the registry before running the shared flow.
+A provider not listed exits its hook silently — that agent behaves as if hookline were absent. Each provider registers its own entry point at install time (`settings.json` hook for Claude-style agents, `hooks.json` merge for Codex, plugin file for OpenCode, `hooks/hookline.json` merge for Grok); the entry calls `hooks/hookline.sh <provider>`, which gates on the registry before running the shared flow.
 
 **On Claude Code:** native remote/mobile approvals already cover claude end-to-end — hookline still registers and works for claude (and Claude-style profiles), but is optional there. Its main job is bringing the same phone-approval UX to the other providers.
 
@@ -148,11 +149,19 @@ Codex support rides codex's own `PermissionRequest` hook — merged into `~/.cod
 3. **Scope is `Bash`, `apply_patch`, and MCP tools (`mcp__*`).** MCP approvals go through the same decline → menu → phone-answer flow.
 4. **The hook declines first, then injects keys.** An empty decision hands the request back to codex's own approval menu (so the terminal looks completely normal); when the phone answers, the watcher sends Enter (approve) or Esc (cancel) into the tmux pane that owns the prompt — or the frontmost window outside tmux.
 
+### Grok
+
+Grok support rides grok's claude-compatible `PreToolUse` hooks — a `hookline.json` entry merged into `~/.grok/hooks/` at install (existing hooks preserved, config.toml untouched; grok runs global hooks without a trust step). Three things to know:
+
+1. **Scope is grok's native tool names.** The matcher is an anchored alternation over `run_terminal_command`, `write`, `search_replace`, `ask_user_question` and their claude aliases, so an MCP `server__tool` name containing `write` never matches.
+2. **`ask` forces grok's own permission card.** Safe prefixes and `Bash(...)` allowlist entries from your Claude settings (grok loads the same rules) defer silently; questions defer straight into grok's option picker and reuse the shared question body and buttons.
+3. **The watcher injects the keys** — response-only like codex: allow types the allow-once row's digit, parsed off the pane screenshot because row labels and order vary by prompt class and the focused row defaults to always-approve (Enter is never safe); deny sends Ctrl+C (Esc only parks focus); a question answer types the option digit (the card auto-advances and auto-submits). tmux is the reliable path — outside tmux the screenshot comes from iTerm2's session contents, and an unreadable screen injects nothing (the prompt stays for you to answer by hand).
+
 ### Adding an adapter
 
 1. Create `hooks/adapters/<provider>.sh` implementing the adapter interface documented at the top of `hooks/core.sh`: normalize stdin JSON, extract the Bash command, parse an allowlist source, emit the provider's decision JSON, build the notification body, expose a local-progress counter, and inject/resolve allow|deny.
 2. Register the provider's entry point (settings hook, plugin, etc.) to invoke `hookline.sh <provider>` with the raw payload.
-3. Set `ADAPTER_RESPONSE_ONLY=1` when the daemon must not inject tmux keys for this provider — either the provider resolves decisions itself (reply API) or its prompt needs a different key profile than the daemon's built-in claude keys (codex: Enter/Esc from the hook-side watcher instead).
+3. Set `ADAPTER_RESPONSE_ONLY=1` when the daemon must not inject tmux keys for this provider — either the provider resolves decisions itself (reply API) or its prompt needs a different key profile than the daemon's built-in claude keys (codex: Enter/Esc, grok: row digit / Ctrl+C, both from the hook-side watcher).
 4. Add golden cases in `scripts/hook-golden.sh`, then run `just lint && just golden`.
 
 ## Configuration
@@ -169,7 +178,7 @@ HOOKLINE_EXTENDED_INTERVAL=180          # cadence of extended-window checks (sec
 HOOKLINE_MAX_RETRIES=3                   # number of Retry button taps allowed
 HOOKLINE_NTFY_USERNAME=""               # for self-hosted ntfy with auth
 HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
-HOOKLINE_PROVIDERS="claude opencode"    # provider registry; unset = all enabled
+HOOKLINE_PROVIDERS="claude codex opencode grok"    # provider registry; unset = all enabled
 ```
 
 Changes take effect immediately — no reinstall needed. `hookline setup` walks through
@@ -252,6 +261,7 @@ the CLI, and installed files. Optionally removes config and logs.
 | Other | AppleScript (frontmost) | Targets whichever app is in focus |
 | OpenCode TUI | Reply API (no injection) | The plugin answers the prompt in-process; no terminal focus or Accessibility needed |
 | Codex TUI | `tmux send-keys` (own pane) / AppleScript | `PermissionRequest` declines → codex's own approval menu shows; phone answer injects Enter (approve) / Esc (cancel) into the pane that owns the prompt |
+| Grok TUI | `tmux send-keys` (own pane) / AppleScript | `ask` forces grok's permission card; the phone answer types the allow-once row's digit (parsed off the screen — Enter would hit grok's always-approve preselect) or Ctrl+C to deny |
 
 When the phone answers a prompt in a bare terminal, hookline first focuses the exact session that asked (iTerm2 by session id, WezTerm by pane id) so keystrokes never land in a neighboring window; Terminal.app and unknown terminals keep the previous frontmost behavior. tmux needs none of this — `send-keys` targets the pane directly.
 

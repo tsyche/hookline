@@ -298,7 +298,7 @@ CODEX_DIR="${HOME}/.codex"
 CODEX_HOOKS="${CODEX_DIR}/hooks.json"
 if [ -d "$CODEX_DIR" ]; then
   # shellcheck source=/dev/null
-  source "${HOOK_SRC_DIR}/adapters/codex.sh"   # for ADAPTER_MATCHER (codex registration is last)
+  source "${HOOK_SRC_DIR}/adapters/codex.sh"   # for ADAPTER_MATCHER
   if [ ! -s "$CODEX_HOOKS" ]; then
     printf '%s\n' '{"hooks":{}}' > "$CODEX_HOOKS"
   fi
@@ -313,6 +313,34 @@ if [ -d "$CODEX_DIR" ]; then
     ' "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
     echo "Hook registered in $CODEX_HOOKS (provider: codex)"
     echo "Review it once inside codex (/hooks) — codex skips untrusted hooks until then."
+  fi
+fi
+
+# grok: write a global PreToolUse entry into ~/.grok/hooks/hookline.json —
+# grok runs global hooks without a trust step, and this file is separate from
+# config.toml, so the user's grok config is never touched. Skipped when grok
+# itself isn't present. The hook still no-ops until `grok` is added to
+# HOOKLINE_PROVIDERS. Merging preserves any hooks already in the file; a fresh
+# file starts from {"hooks":{}}.
+GROK_DIR="${HOME}/.grok"
+GROK_HOOKS="${GROK_DIR}/hooks/hookline.json"
+if [ -d "$GROK_DIR" ]; then
+  # shellcheck source=/dev/null
+  source "${HOOK_SRC_DIR}/adapters/grok.sh"   # for ADAPTER_MATCHER (grok registration is last)
+  mkdir -p "${GROK_DIR}/hooks"
+  if [ ! -s "$GROK_HOOKS" ]; then
+    printf '%s\n' '{"hooks":{}}' > "$GROK_HOOKS"
+  fi
+  hook_cmd="[ -x \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"\$HOME/.local/share/hookline/hooks/hookline.sh\" grok || true"
+  if jq -e --arg cmd "$hook_cmd" '.hooks.PreToolUse[]?.hooks[]? | select(.command? == $cmd)' "$GROK_HOOKS" &>/dev/null; then
+    echo "Hook already registered in $GROK_HOOKS (provider: grok)"
+  else
+    jq --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
+      .hooks //= {} |
+      .hooks.PreToolUse = ((.hooks.PreToolUse // []) +
+        [{matcher: $matcher, hooks: [{type: "command", command: $cmd, timeout: 30}]}])
+    ' "$GROK_HOOKS" > "${GROK_HOOKS}.tmp" && mv "${GROK_HOOKS}.tmp" "$GROK_HOOKS"
+    echo "Hook registered in $GROK_HOOKS (provider: grok)"
   fi
 fi
 

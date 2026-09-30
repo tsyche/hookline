@@ -36,9 +36,10 @@ DAEMON_PLIST="$H/Library/LaunchAgents/com.hookline.daemon.plist"
 WATCHDOG_PLIST="$H/Library/LaunchAgents/com.hookline.watchdog.plist"
 CONFIG="$H/.config/hookline/config"
 CODEX_HOOKS="$H/.codex/hooks.json"
+GROK_HOOKS="$H/.grok/hooks/hookline.json"
 
 mkdir -p "$H/.claude" "$H/.claude-bb" "$H/.config/opencode" "$H/.config/hookline" \
-         "$H/Library/LaunchAgents" "$H/.codex"
+         "$H/Library/LaunchAgents" "$H/.codex" "$H/.grok/hooks"
 
 seed_settings() { # seed_settings <path>
   cat > "$1" <<'EOF'
@@ -80,6 +81,27 @@ cat > "$CODEX_HOOKS" <<'EOF'
 }
 EOF
 seed_cx="$(jq -S . "$CODEX_HOOKS")"
+
+# Seed grok's hooks file the same way — a foreign PreToolUse entry that the
+# merge must preserve byte-for-byte through install/uninstall.
+cat > "$GROK_HOOKS" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/bin/foreign-grok-hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+seed_grk="$(jq -S . "$GROK_HOOKS")"
 
 # Pre-written config keeps install non-interactive (topic must survive).
 printf '%s\n' 'HOOKLINE_TOPIC="install-test-topic"' > "$CONFIG"
@@ -134,6 +156,14 @@ codex_foreign_count() { # <hooks.json> -> foreign SessionStart hooks that must s
   jq '[.hooks.SessionStart[]?.hooks[]? | select((.command // "") | contains("foreign-hook"))] | length' "$1"
 }
 
+grok_count() { # <hookline.json> -> number of hookline PreToolUse commands
+  jq '[.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$1"
+}
+
+grok_foreign_count() { # <hookline.json> -> foreign PreToolUse hooks that must survive
+  jq '[.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("foreign-grok-hook"))] | length' "$1"
+}
+
 run_install() {
   env HOME="$H" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=launchd bash "$REPO/install.sh" 2>&1
 }
@@ -165,6 +195,11 @@ contains "registered-codex" "$(codex_count "$CODEX_HOOKS")" "1"
 contains "codex-foreign-hook-kept" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
 contains "codex-matcher-set" "$(jq -r '.hooks.PermissionRequest[0].matcher' "$CODEX_HOOKS")" "Bash|apply_patch|mcp__.*"
 contains "install-mentions-codex-trust" "$out" "codex (/hooks)"
+contains "registered-grok" "$(grok_count "$GROK_HOOKS")" "1"
+contains "grok-foreign-hook-kept" "$(grok_foreign_count "$GROK_HOOKS")" "1"
+contains "grok-matcher-set" "$(jq -r '.hooks.PreToolUse[-1].matcher' "$GROK_HOOKS")" \
+  '^(Bash|run_terminal_command|Edit|Write|MultiEdit|search_replace|write|edit|NotebookEdit|notebook_edit|AskUserQuestion|ask_user_question)$'
+contains "install-mentions-grok" "$out" "(provider: grok)"
 
 # ── 2. reinstall is idempotent: one registration, topic unchanged ──
 out="$(run_install)"
@@ -173,6 +208,7 @@ expect_rc "reinstall" "$rc"
 contains "reinstall-already-registered" "$out" "already registered"
 contains "reinstall-single-registration" "$(hookline_count "$SETTINGS")" "1"
 contains "reinstall-single-codex-registration" "$(codex_count "$CODEX_HOOKS")" "1"
+contains "reinstall-single-grok-registration" "$(grok_count "$GROK_HOOKS")" "1"
 contains "reinstall-topic-unchanged" "$(cat "$CONFIG")" 'HOOKLINE_TOPIC="install-test-topic"'
 
 # ── 3. uninstall (keep config): exact inverse, other hooks untouched ──
@@ -191,6 +227,9 @@ contains "blackbox-registration-removed" "$(hookline_count "$SETTINGS_BB")" "0"
 contains "codex-registration-removed" "$(codex_count "$CODEX_HOOKS")" "0"
 contains "codex-foreign-hook-survives" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
 expect_eq "hooks-json-roundtrip-codex" "$seed_cx" "$(jq -S . "$CODEX_HOOKS")"
+contains "grok-registration-removed" "$(grok_count "$GROK_HOOKS")" "0"
+contains "grok-foreign-hook-survives" "$(grok_foreign_count "$GROK_HOOKS")" "1"
+expect_eq "hooks-json-roundtrip-grok" "$seed_grk" "$(jq -S . "$GROK_HOOKS")"
 expect_eq "settings-json-roundtrip-claude" "$seed_a" "$(jq -S . "$SETTINGS")"
 expect_eq "settings-json-roundtrip-blackbox" "$seed_b" "$(jq -S . "$SETTINGS_BB")"
 exists "config-kept-on-n" "$CONFIG"
@@ -199,6 +238,7 @@ exists "config-kept-on-n" "$CONFIG"
 out="$(run_install)"
 contains "re-register-after-uninstall" "$(hookline_count "$SETTINGS")" "1"
 contains "re-register-codex-after-uninstall" "$(codex_count "$CODEX_HOOKS")" "1"
+contains "re-register-grok-after-uninstall" "$(grok_count "$GROK_HOOKS")" "1"
 
 # ── 5. uninstall (remove config): everything goes ──
 out="$(run_uninstall y)"

@@ -487,6 +487,116 @@ run_case_log "claude-progress-ignores-metadata" claude \
   "baseline transcript lines: 2" has "$CLAUDE_WRITE" "" '"permissionDecision":"ask"'
 rm -rf "$FIXTURE_DIR"
 
+# ── grok adapter cases: claude-shaped decisions against grok-native payloads ──
+GRK_BASH='{"tool_name":"run_terminal_command","tool_input":{"command":"rm -rf /tmp/x"},"cwd":"/tmp","session_id":"golden-grk","transcript_path":"/dev/null"}'
+GRK_SAFE='{"tool_name":"run_terminal_command","tool_input":{"command":"echo hi"},"cwd":"/tmp","session_id":"golden-grk","transcript_path":"/dev/null"}'
+GRK_ALLOWLISTED='{"tool_name":"run_terminal_command","tool_input":{"command":"safe --flag"},"cwd":"/tmp","session_id":"golden-grk","transcript_path":"/dev/null"}'
+GRK_WRITE='{"tool_name":"write","tool_input":{"file_path":"/tmp/x","content":"y"},"cwd":"/tmp","session_id":"golden-grk","transcript_path":"/dev/null"}'
+GRK_Q3='{"tool_name":"ask_user_question","tool_input":{"questions":[{"question":"Ship it?","header":"Ship","options":[{"label":"Alpha","description":"first"},{"label":"Beta","description":"second"},{"label":"Gamma","description":"third"}]}]},"cwd":"/tmp","session_id":"golden-grk","transcript_path":"/dev/null"}'
+
+run_case "grok-no-config" grok "config not found" '{}' noconfig
+
+run_case "grok-bash-ask" grok "$ASK" "$GRK_BASH"
+
+run_case "grok-safe-prefix" grok "$DEFER" "$GRK_SAFE"
+
+run_case "grok-allowlisted" grok "$DEFER" "$GRK_ALLOWLISTED" allowlist
+
+run_case "grok-write-ask" grok "$ASK" "$GRK_WRITE"
+
+run_case "grok-question-defers" grok "$DEFER" "$GRK_Q3"
+
+run_case_log "grok-disabled-flag" grok "=== PreToolUse hook fired ===" hasnt "$GRK_BASH" disabled "$DEFER"
+
+if grep -q "HOOKLINE_PROVIDERS" "$HOOK"; then
+  run_case "grok-gate-excluded" grok "" "$GRK_BASH" "providers:claude"
+
+  run_case "grok-gate-included" grok "$ASK" "$GRK_BASH" "providers:claude grok"
+else
+  echo "SKIP grok gate cases (entry has no HOOKLINE_PROVIDERS gate yet)"
+fi
+
+# ── grok notify payload: native tool names in the message, question parity ──
+run_case_notify_payload "grok-permission-notify-default-trio" grok "$GRK_BASH" \
+  '(.no_actions | not) and (.actions | length) == 0
+   and (.message | contains("$ rm -rf /tmp/x"))' \
+  "" "$ASK"
+
+run_case_notify_payload "grok-write-notify-path" grok "$GRK_WRITE" \
+  '.message | contains("write: /tmp/x")' \
+  "" "$ASK"
+
+run_case_notify_payload "grok-question-notify-options" grok "$GRK_Q3" \
+  '.options == ["Alpha", "Beta", "Gamma"]
+   and (.actions | length) == 3 and .actions[0].payload == "answer|Alpha"
+   and (.message | contains("Reply 1-3 (or A-C) to answer"))' \
+  "" "$DEFER"
+
+# ── grok progress counter: raw updates.jsonl line count (only grows when the
+#    turn resolves — permission cards sit idle) ──
+GRK_FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+GRK_TRANSCRIPT="$GRK_FIXTURE_DIR/updates.jsonl"
+printf '%s\n' '{"type":"tool"}' '{"type":"tool"}' '{"type":"tool"}' > "$GRK_TRANSCRIPT"
+GRK_WRITE_FIX=$(jq -nc --arg tp "$GRK_TRANSCRIPT" \
+  '{tool_name:"write",tool_input:{file_path:"/tmp/x",content:"y"},cwd:"/tmp",session_id:"golden-grk2",transcript_path:$tp}')
+
+run_case_log "grok-progress-raw-transcript" grok \
+  "baseline transcript lines: 3" has "$GRK_WRITE_FIX" "" "$ASK"
+rm -rf "$GRK_FIXTURE_DIR"
+
+# ── grok allow-row parser: the card's allow-once digit, per prompt class ──
+# Row order varies (bash/edit/ask cards) and Enter would hit the
+# always-approve preselect, so injection reads the digit off the screenshot;
+# no matching row must yield no digit (injector logs and does nothing).
+grok_parse_case() { # grok_parse_case <name> <expected> <fixture-line>...
+  local name="$1" expect="$2" got
+  shift 2
+  got=$(printf '%s\n' "$@" \
+    | bash -c '. "$1" >/dev/null 2>&1; grok_allow_digit' _ "$REPO/hooks/adapters/grok.sh")
+  if [ "$got" = "$expect" ]; then
+    echo "PASS $name"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $name (got '$got', want '$expect')"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+grok_parse_case "grok-parse-bash-card" "3" \
+  '  1 (●) Yes, and don'"'"'t ask again for anything (always-approve mode)' \
+  '  2 (○) Always allow: touch /tmp/x' \
+  '  3 (○) Yes, proceed' \
+  '  4 (○) No, reject (type to add feedback)' \
+  '  5 (○) Never allow: touch /tmp/x'
+
+grok_parse_case "grok-parse-edit-card" "3" \
+  '  1 (●) Yes, and don'"'"'t ask again for anything (always-approve mode)' \
+  '  2 (○) Yes, allow all edits during this session' \
+  '  3 (○) Yes' \
+  '  4 (○) No, reject (type to add feedback)'
+
+grok_parse_case "grok-parse-ask-card" "3" \
+  '  1 (●) Yes, and don'"'"'t ask again for anything (always-approve mode)' \
+  '  2 (○) always allow' \
+  '  3 (○) allow once' \
+  '  4 (○) No, reject (type to add feedback)'
+
+grok_parse_case "grok-parse-remember-off" "2" \
+  '  1 (●) Yes, don'"'"'t ask again for anything (always-approve mode)' \
+  '  2 (○) Yes, proceed' \
+  '  3 (○) No, reject (type to add feedback)'
+
+# real pane capture: box-border prefix on every row, scrollbar glyph after
+grok_parse_case "grok-parse-boxed-card" "3" \
+  '  ┃  1 (●) Yes, and don'"'"'t ask again for anything (always-approve mode)' \
+  '  ┃  2 (○) Yes, allow all edits during this session' \
+  '  ┃  3 (○) Yes                              █' \
+  '  ┃  4 (○) No, reject (type to add feedback)'
+
+grok_parse_case "grok-parse-no-row" "" \
+  '  1 (○) something else' \
+  '  prompt waiting'
+
 echo
 echo "golden: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

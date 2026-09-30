@@ -114,6 +114,19 @@ if [ -f "$CODEX_HOOKS" ] && \
   echo "Hook removed from $CODEX_HOOKS"
 fi
 
+# Remove the grok registration (inverse of install.sh's merge — only the
+# hookline PreToolUse entries; every other hook in the file survives).
+GROK_HOOKS="${HOME}/.grok/hooks/hookline.json"
+if [ -f "$GROK_HOOKS" ] && \
+   jq -e '.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$GROK_HOOKS" &>/dev/null; then
+  jq '.hooks //= {} |
+      .hooks.PreToolUse = ((.hooks.PreToolUse // []) |
+        map(select([.hooks[]?.command // ""] | any(contains("hookline")) | not))) |
+      if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end' \
+    "$GROK_HOOKS" > "${GROK_HOOKS}.tmp" && mv "${GROK_HOOKS}.tmp" "$GROK_HOOKS"
+  echo "Hook removed from $GROK_HOOKS"
+fi
+
 # Optionally remove config
 echo -n "Remove config and logs at ~/.config/hookline and ~/.local/share/hookline? [y/N] "
 read -r confirm

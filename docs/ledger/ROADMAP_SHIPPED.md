@@ -19,7 +19,7 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.5.0 | 2026-09-27 | tagged release covering the Phase 6 rows below (codex adapter, response-file hardening, MCP matcher, changelog-promote, grok spike) |
 | v1.6.0 | 2026-09-29 | question-dialog phone flow (typed/word replies, extended window), setup wizard, `just check-gates`, opencode plugin tests |
 | v1.7.0 | 2026-09-29 | pattern management CLI, CONTRIBUTING.md, in-repo `.githooks/` + `just hooks` |
-| Phase 6 b3 | 2026-09-29 | unreleased: question-body compression (Route A over-budget fit, 30-option acceptance) |
+| Phase 6 b3 | 2026-09-29 | unreleased: question-body compression, one-line install, version check, grok adapter, bare-terminal multi-session targeting |
 
 ## v1.1 — Stable (archived)
 
@@ -259,7 +259,7 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       example, roadmap question-flow entry); code comments exempt — ids live in untracked
       config + the code that consumes them
 
-## Phase 6 (batch 3) — question-body compression (shipped 2026-09-29, unreleased)
+## Phase 6 (batch 3) — question-body compression + grok adapter (shipped 2026-09-29, unreleased)
 
 19. **Long question lists — chunked/compressed bodies** — done 2026-09-29 (unreleased)
     - Gap: the notification body truncated at 1500 chars, so a long option list (or verbose
@@ -276,3 +276,51 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       answerable by number (`scripts/hook-golden.sh` — 3 new notify-payload cases:
       compressed 30-opt keeps every option + drops descriptions, long-label equal-share
       fit stays ≤1500, short question keeps its descriptions; 40 golden cases total)
+
+20. **grok adapter** — done 2026-09-29 (unreleased)
+    - Contract probed live on grok 1.0.44 before building: the claude `hookSpecificOutput`
+      decision shape is accepted verbatim (`ask` forces grok's permission card even when a
+      claude-compat allow rule would run the call; defer leaves grok's own rules in charge),
+      the registered matcher is tested against grok's native tool names (anchored
+      alternation — `run_terminal_command`, `write`, `search_replace`, `ask_user_question`
+      all observed firing; anchoring keeps MCP `server__tool` names out), global
+      `~/.grok/hooks/*.json` handlers run with no trust step, and the `ask_user_question`
+      payload is claude-shaped — so the shared question builder/buttons ride over unchanged
+    - Permission-card key profile (probed): allow = the allow-once row's digit parsed off
+      the pane screenshot — labels vary per prompt class ("Yes, proceed" / "Yes" /
+      "allow once") and row order shifts with `remember_tool_approvals`, and the focused
+      row defaults to always-approve, so Enter is never safe and a parse miss injects
+      nothing; deny = Ctrl+C (Esc only parks focus); question answers = the option digit
+      only (the card auto-advances between questions and auto-submits on the last)
+    - Response-only like codex (`ADAPTER_RESPONSE_ONLY=1`): registers without a pane →
+      response file → watcher-side `adapter_inject` (tmux send-keys into the hook's own
+      pane, iTerm2 session-contents screenshot outside tmux); the daemon's tmux keys stay
+      claude-specific — "1" would be grok's always-approve row
+    - Registration merges `~/.grok/hooks/hookline.json` (foreign hooks preserved, inverse
+      in uninstall.sh, `hookline status` section); allowlist source = the Claude settings
+      files grok itself loads (`Bash(...)` patterns); local-answer signal = raw
+      `updates.jsonl` line count (grows on turn resolution, idle while a card sits)
+    - Verified: 19 new golden cases (59 total — stdout contract, notify payloads, progress
+      counter, row-parser fixtures incl. a real boxed pane capture), install-test roundtrip
+      (107 total), and a live tmux E2E: safe-prefix/allowlist defer, forced ask card, phone
+      allow → digit → file, deny → Ctrl+C, question defer → `answer|<label>` → digit,
+      local answer during grace → cancel with no notification
+
+21. **One-line install** — done 2026-09-29 (unreleased), incl. the non-macOS fail-fast guard
+    - `curl -fsSL … | bash` → tagged release tarball → `install.sh`; original entry:
+      "Acceptance met: fresh machine install with no git checkout of the repo
+      (`scripts/get-test.sh` — 12 offline cases)"
+
+22. **Version / upgrade check** — done 2026-09-29 (unreleased)
+    - `hookline status` flags when the latest GitHub release tag is newer than the
+      installed `VERSION` (recorded by `install.sh`); original entry: "Acceptance met:
+      outdated install reports the newer tag; endpoint-down stays quiet"
+
+23. **Multi-session support (bare terminals)** — done 2026-09-29 (unreleased)
+    - `focus_prompt_window` (hooks/core.sh) runs before every keystroke injection —
+      iTerm2 selects the window/tab by `TERM_SESSION_ID` UUID (live-probed), WezTerm
+      activates the pane via `wezterm cli activate-pane --pane-id`; Terminal.app /
+      unknown terminals keep the frontmost fallback (no stable id — Window/tab index
+      stays fragile, deliberately untouched); tmux already pane-exact. Watchers inject
+      (both adapters), so the terminal env rides the hook process — no daemon changes.
+      Tests: `scripts/focus-test.sh` (15 dry-run cases, in `check-gates`)

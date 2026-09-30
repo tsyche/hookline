@@ -747,6 +747,17 @@ cmd_status() {
     echo
   fi
 
+  GROK_HOOKS="${HOME}/.grok/hooks/hookline.json"
+  if [ -d "${HOME}/.grok" ]; then
+    echo "── grok hook ($GROK_HOOKS)"
+    if [ -f "$GROK_HOOKS" ] && jq -e '.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$GROK_HOOKS" &>/dev/null; then
+      echo "  registered ✓"
+    else
+      echo "  NOT registered — run install.sh to register"
+    fi
+    echo
+  fi
+
   echo "── Hook file ($HOOK_DST)"
   if [ -f "$HOOK_DST" ]; then
     echo "  installed ✓  ($(wc -l < "$HOOK_DST" | tr -d ' ') lines)"
