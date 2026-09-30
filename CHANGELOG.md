@@ -6,6 +6,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-30
+
 ### Added
 
 - `context` keyword — type `context` from the ntfy app while a prompt is pending and a separate notification arrives with an assessed ≤10-line summary of where the conversation stands (current task, what just happened, what the pending prompt asks); the pending prompt, its options, and its response file stay untouched, so the original prompt is still answerable by button or typed reply. The hook's register payload gained `provider`/`transcript_path`/`cwd`; the daemon runs the provider's own headless CLI over the transcript tail (`claude -p`, `codex exec -s read-only` with the prompt on stdin, `grok -p`, `opencode run --pure`; opencode has no transcript file, so its tail comes from a read-only `opencode export`) with `HOOKLINE_CONTEXT_CHILD=1` — the entry guard consumes stdin and no-ops so the summarizer's own hooks can never start a second phone flow; any failure (no transcript, missing binary, timeout, non-zero, empty) falls back to the raw tail (last 10 lines). Sent with `force=True` (explicit request bypasses snooze), ANSI-stripped and budget-capped like question bodies, no buttons; `HOOKLINE_CONTEXT_TIMEOUT` (config, default 45s) bounds the model call. Tests: 12 daemon unit cases (`TestContextKeyword`) + 2 golden register-payload cases
@@ -103,7 +105,8 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 - Release automation (VERSION-triggered release workflow, release-smoke CI) and the shipped roadmap ledger
 - First tagged release (earlier milestones: v1.1 stable, v1.2 core — shipped untagged in 2026-06)
 
-[Unreleased]: https://github.com/tsyche/hookline/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/tsyche/hookline/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/tsyche/hookline/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/tsyche/hookline/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tsyche/hookline/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tsyche/hookline/compare/v1.5.0...v1.6.0
