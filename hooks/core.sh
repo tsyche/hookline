@@ -326,7 +326,8 @@ core_main() {
   [[ "$EXTENDED_WAIT" =~ ^[0-9]+$ ]] || EXTENDED_WAIT=3600
   [[ "$EXTENDED_INTERVAL" =~ ^[0-9]+$ ]] || EXTENDED_INTERVAL=180
 
-  # 4. Register session with daemon (captures TTY + terminal info for routing).
+  # 4. Register session with daemon (TTY + terminal info for routing; the
+  #    provider/transcript/cwd fields feed the typed "context" summary).
   #    ADAPTER_RESPONSE_ONLY=1 (opencode: resolves decisions itself via the
   #    reply API) registers without a pane so the daemon routes the phone
   #    answer through the response file instead of tmux keystrokes.
@@ -354,7 +355,10 @@ core_main() {
       --arg term_program "${TERM_PROGRAM:-}" \
       --arg tmux_pane "${TMUX_PANE_ID:-}" \
       --arg tmux_socket "${TMUX_SOCKET_ID:-}" \
-      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane,tmux_socket:$tmux_socket}')"
+      --arg provider "$PROVIDER" \
+      --arg transcript_path "${TRANSCRIPT_PATH:-}" \
+      --arg cwd "$CWD" \
+      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane,tmux_socket:$tmux_socket,provider:$provider,transcript_path:$transcript_path,cwd:$cwd}')"
     log "registered session with daemon"
   fi
 

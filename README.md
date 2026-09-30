@@ -88,7 +88,8 @@ Use your agent normally. When a permission prompt fires:
 | **Retry** | Resends a fresh notification (useful when you catch it late) |
 
 You can also type a reply in the ntfy channel instead of tapping: `allow`,
-`deny`, or `retry` work anywhere a button would.
+`deny`, or `retry` work anywhere a button would, and `context` (see below)
+summarizes the session when you've lost the thread.
 
 ### Late replies (extended window)
 
@@ -98,6 +99,21 @@ background watcher stays alive for another `HOOKLINE_EXTENDED_WAIT` seconds
 including a typed `retry` or a button tap on the earlier notification — and the
 expiry notice says how long you have. When the window closes, the watcher gives
 up and the prompt is terminal-only again.
+
+### Context summary (`context`)
+
+Away from the terminal and don't remember what the prompt is asking? Type
+`context` in the ntfy channel while a prompt is pending: a **separate**
+notification arrives with an assessed summary of where the conversation
+stands — current task, what just happened, and what the pending prompt wants
+(≤10 plain-text lines). The daemon asks the provider's own headless CLI
+(`claude -p`, `codex exec`, `grok -p`, `opencode run`; opencode sessions come
+from a read-only `opencode export`, since opencode has no transcript file) to
+summarize the transcript tail the hook registered for the session; if that
+fails or times out you get the raw tail instead. The pending prompt is
+untouched — answer it afterwards by button or typed reply as usual. An
+explicit request, so it pushes even while snoozed; needs the daemon, like all
+typed replies.
 
 ### Snooze
 
@@ -303,7 +319,7 @@ See [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control) for au
 - **Keystroke injection** — terminal prompt auto-dismisses when phone responds (reply-API providers resolve in-process instead)
 - **SSE-based daemon** — persistent connection for instant response; no polling delay
 - **Retry button** — instant resend without re-waiting the grace period
-- **Typed replies** — option numbers/letters plus `retry`/`deny` words from the ntfy channel; invalid replies get a correction notification
+- **Typed replies** — option numbers/letters plus `retry`/`deny` words from the ntfy channel, and `context` for an on-demand summary of where the conversation stands; invalid replies get a correction notification
 - **Extended window** — late answers still land for up to an hour after the phone timeout
 - **Fallback mode** — works without the daemon via inline polling
 - **Multi-provider registry** — Claude, Codex, OpenCode, and adapter-shaped future agents behind one core

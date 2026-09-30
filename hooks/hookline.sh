@@ -3,12 +3,21 @@
 # hookline — provider hook entry → ntfy.sh remote approval
 # Usage: hookline.sh [provider]   (default provider: claude)
 #
-# Flow: config → HOOKLINE_PROVIDERS registry gate → source core + adapter →
-# core_main. The core owns grace period / allowlist plumbing / daemon handoff /
-# notification / retry; the adapter translates provider payload, decision JSON,
-# allowlist source, progress signal, and injection profile.
+# Flow: context-child guard → config → HOOKLINE_PROVIDERS registry gate →
+# source core + adapter → core_main. The core owns grace period / allowlist
+# plumbing / daemon handoff / notification / retry; the adapter translates
+# provider payload, decision JSON, allowlist source, progress signal, and
+# injection profile.
 
 PROVIDER="${1:-claude}"
+
+# Recursion guard: the daemon's headless context-summary agent inherits this
+# environment, and it runs where hookline is registered — consume stdin and
+# no-op so our own summarizer can never start a second phone flow.
+if [ -n "${HOOKLINE_CONTEXT_CHILD:-}" ]; then
+  cat >/dev/null 2>&1 || true
+  exit 0
+fi
 
 CONFIG_FILE="${HOME}/.config/hookline/config"
 LOG_FILE="${HOME}/.local/share/hookline/hookline.log"

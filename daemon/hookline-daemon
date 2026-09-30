@@ -39,10 +39,10 @@ SSE_READ_TIMEOUT = 300
 
 # Bare replies accepted from the main topic (typed in the ntfy app): short
 # alnum only — option numbers/letters ("4"/"D"), retry/allow/deny/snooze/
-# unsnooze words, and misses like "two" that get routed to invalid-reply
-# feedback. The one spaced form allowed is "snooze <minutes>"; any other
-# multi-char body with spaces/punctuation is our own notification echo —
-# never parsed as decision.
+# unsnooze/context words, and misses like "two" that get routed to
+# invalid-reply feedback. The one spaced form allowed is "snooze <minutes>";
+# any other multi-char body with spaces/punctuation is our own notification
+# echo — never parsed as decision.
 TYPED_REPLY_RE = re.compile(r'^(?:[0-9A-Za-z]{1,12}|snooze [0-9]{1,4})$')
 
 
@@ -74,6 +74,139 @@ def clear_snooze(path=None):
         os.remove(path or SNOOZE_PATH)
     except FileNotFoundError:
         pass
+
+# ── context keyword ───────────────────────────────────────────────────────────
+# Typed "context" from the ntfy app while a prompt pends: the daemon reads the
+# session's transcript tail and asks the provider's own headless CLI for an
+# assessed summary, pushed as a NEW notification (force=True — an explicit
+# user request bypasses snooze; ≤10 lines). The pending prompt, its options,
+# and its response file are never touched. Any failure — no transcript,
+# missing binary, timeout, empty output — falls back to the raw tail (the
+# last 10 lines, newest first-hand data).
+
+CONTEXT_PROMPT = (
+    "Summarize where this coding-agent conversation stands for someone who is "
+    "away from the terminal and about to answer a pending approval prompt on "
+    "their phone. At most 10 short lines: the current task, what just "
+    "happened, and what the pending prompt is asking for. Plain text only — "
+    "no markdown, no preamble, no tool use.\n\nTranscript tail:\n"
+)
+CONTEXT_MAX_LINES      = 10
+CONTEXT_TAIL_LINES     = 200
+CONTEXT_TAIL_BYTES     = 8 * 1024
+CONTEXT_LINE_CHARS     = 400   # transcript JSONL lines can be tens of KB
+CONTEXT_BUDGET         = 1500  # same body budget as question rendering
+CONTEXT_DEFAULT_TIMEOUT = 45
+
+
+def _find_bin(name):
+    """Absolute path for a CLI — launchd gives the daemon a minimal PATH."""
+    import shutil
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in ("/opt/homebrew/bin", "/usr/local/bin",
+              os.path.expanduser("~/.local/bin")):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def transcript_tail(path):
+    """Last CONTEXT_TAIL_LINES lines / 8KB of a transcript file ('' on error)."""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - CONTEXT_TAIL_BYTES))
+            data = f.read().decode('utf-8', errors='replace')
+    except OSError:
+        return ''
+    return '\n'.join(data.splitlines()[-CONTEXT_TAIL_LINES:]).strip()
+
+
+def opencode_export_tail(session_id, timeout=30):
+    """opencode keeps no transcript file — a read-only `opencode export`
+    yields role-tagged text of the last messages ('' on any failure)."""
+    binary = _find_bin('opencode')
+    if not binary:
+        return ''
+    try:
+        r = subprocess.run([binary, 'export', '--pure', session_id],
+                           capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return ''
+    if r.returncode != 0:
+        return ''
+    try:
+        data = json.loads(r.stdout)
+    except (ValueError, TypeError):
+        return ''
+    out = []
+    for m in (data.get('messages') or [])[-40:]:
+        role = (m.get('info') or {}).get('role') or '?'
+        text = ' '.join(str(p.get('text') or '')
+                        for p in (m.get('parts') or [])
+                        if p.get('type') == 'text')
+        if text.strip():
+            out.append(f"{role}: {text[:600]}")
+    return '\n'.join(out)
+
+
+def headless_summary(provider, transcript, cwd, timeout):
+    """Provider's headless CLI over the transcript tail → text, or None.
+
+    HOOKLINE_CONTEXT_CHILD rides along so the summarizer's own tool calls hit
+    the entry guard instead of starting a second phone flow. blackbox is a
+    claude profile and rides `claude -p`.
+    """
+    binary_name = {'claude': 'claude', 'blackbox': 'claude', 'codex': 'codex',
+                   'grok': 'grok', 'opencode': 'opencode'}.get(provider)
+    if not binary_name:
+        return None
+    binary = _find_bin(binary_name)
+    if not binary:
+        return None
+    prompt = CONTEXT_PROMPT + transcript
+    if provider == 'codex':
+        cmd = [binary, 'exec', '--skip-git-repo-check', '-s', 'read-only',
+               '--color', 'never', '-']
+    elif provider == 'opencode':
+        cmd = [binary, 'run', '--pure', '--title', 'hookline context', prompt]
+    elif provider == 'grok':
+        cmd = [binary, '-p', prompt]
+    else:
+        cmd = [binary, '-p', prompt]
+    kwargs = dict(capture_output=True, text=True, timeout=timeout,
+                  cwd=cwd if cwd and os.path.isdir(cwd)
+                     else os.path.expanduser('~'),
+                  env=dict(os.environ, HOOKLINE_CONTEXT_CHILD='1'))
+    if cmd[-1] == '-':
+        kwargs['input'] = prompt      # codex reads the prompt from stdin
+    else:
+        kwargs['stdin'] = subprocess.DEVNULL
+    try:
+        r = subprocess.run(cmd, **kwargs)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return r.stdout
+
+
+def fit_context(text, keep='first'):
+    """≤CONTEXT_MAX_LINES lines, ANSI stripped, per-line + total budget."""
+    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text or '')
+    lines = [l.rstrip()[:CONTEXT_LINE_CHARS]
+             for l in text.splitlines() if l.strip()]
+    lines = lines[:CONTEXT_MAX_LINES] if keep == 'first' \
+        else lines[-CONTEXT_MAX_LINES:]
+    out = '\n'.join(lines)
+    if len(out) > CONTEXT_BUDGET:
+        out = out[:CONTEXT_BUDGET - 3] + '...'
+    return out
+
 
 # daemon.log is append-only and used to grow forever (plus the launchd plist
 # points stdout/stderr at it). Cap it: one rotated backup, then overwrite.
@@ -305,6 +438,12 @@ class Daemon:
         """
         low = text.lower()
 
+        # 'context' is a read-only side request: summarize the transcript on
+        # a new notification without resolving the prompt.
+        if low == 'context':
+            self._handle_context()
+            return
+
         # Snooze controls run before anything prompt-shaped: they never
         # resolve a pending prompt, they only flip the mute window.
         if low in ('snooze', 'unsnooze') or low.startswith('snooze '):
@@ -421,6 +560,62 @@ class Daemon:
         self.log.info('snooze cleared')
         self.send_ntfy(load_config(), 'hookline', 'Notifications resumed',
                        '', [], force=True)
+
+    def _context_transcript(self, session, session_id):
+        """Transcript source for a summary: the registered file tail, or a
+        read-only opencode export (opencode has no transcript file)."""
+        path = session.get('transcript_path') or ''
+        if path and os.path.isfile(path):
+            return transcript_tail(path)
+        if session.get('provider') == 'opencode':
+            return opencode_export_tail(session_id)
+        return ''
+
+    def _handle_context(self):
+        """Typed 'context': assessed transcript summary on a side notification.
+
+        Read-only for the prompt — pending, question options, and the
+        response file stay exactly as they were, so the original prompt is
+        still answerable by button or typed reply afterwards. The most
+        recently notified pending prompt wins when several are in flight.
+        """
+        config = load_config()
+        with self.lock:
+            req_ids = list(self.pending)
+        if not req_ids:
+            self.log.info('context: no pending prompt')
+            self.send_ntfy(config, 'hookline',
+                           'No pending prompt — nothing to summarize', '',
+                           [], force=True)
+            return
+        req_id = req_ids[-1]
+        with self.lock:
+            session_id = self.pending[req_id]
+            session = dict(self.sessions.get(session_id, {}))
+        provider = session.get('provider', '')
+        self.log.info(
+            f"[{req_id[:16]}] context request (session {session_id[:8]} "
+            f"provider={provider or '?'})"
+        )
+        transcript = self._context_transcript(session, session_id)
+        if not transcript:
+            summary = ('No transcript available for this session — '
+                       'nothing to summarize.')
+        else:
+            try:
+                timeout = int(config.get('HOOKLINE_CONTEXT_TIMEOUT',
+                                         CONTEXT_DEFAULT_TIMEOUT))
+            except ValueError:
+                timeout = CONTEXT_DEFAULT_TIMEOUT
+            summary = headless_summary(provider, transcript,
+                                        session.get('cwd', ''), timeout)
+            # model answer → its first lines; raw-tail fallback → the LAST
+            # lines (newest first-hand data).
+            summary = fit_context(summary or transcript,
+                                  keep='first' if summary else 'last')
+        title = session.get('notify_title') or 'hookline'
+        self.send_ntfy(config, f'{title} — context', summary, req_id, [],
+                       force=True)
 
     def handle_response(self, req_id, decision):
         # Unsnooze button lands here: response-topic body "unsnooze|" →
@@ -578,14 +773,20 @@ class Daemon:
                 with self.lock:
                     sess = self.sessions.setdefault(session_id, {})
                     sess.update({
-                        'tty':          msg.get('tty', ''),
-                        'term_program': msg.get('term_program', ''),
-                        'tmux_pane':    msg.get('tmux_pane', ''),
-                        'tmux_socket':  msg.get('tmux_socket', ''),
+                        'tty':             msg.get('tty', ''),
+                        'term_program':    msg.get('term_program', ''),
+                        'tmux_pane':       msg.get('tmux_pane', ''),
+                        'tmux_socket':     msg.get('tmux_socket', ''),
+                        # context-keyword inputs: headless binary choice,
+                        # transcript source, working directory
+                        'provider':        msg.get('provider', ''),
+                        'transcript_path': msg.get('transcript_path', ''),
+                        'cwd':             msg.get('cwd', ''),
                     })
                 self.log.info(
                     f"registered session {session_id[:8]} "
-                    f"tty={msg.get('tty','')} tmux={msg.get('tmux_pane','')}"
+                    f"tty={msg.get('tty','')} tmux={msg.get('tmux_pane','')} "
+                    f"provider={msg.get('provider','')}"
                 )
                 conn.sendall(b'ok')
 

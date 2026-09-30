@@ -202,7 +202,9 @@ run_case_notify_payload() {
     [ ! -f "$lock" ] && break
     sleep 0.25
   done
-  notify=$(jq -c 'select(.type=="notify")' "$cap" 2>/dev/null | head -1)
+  # MSG_TYPE (default notify) picks which captured message the filter runs
+  # against — register cases assert the context-keyword fields instead.
+  notify=$(jq -c "select(.type==\"${MSG_TYPE:-notify}\")" "$cap" 2>/dev/null | head -1)
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
 
@@ -350,6 +352,19 @@ run_case_notify_payload "claude-question-notify-options" claude "$CLAUDE_Q3" \
    and (.actions | length) == 3 and .actions[0].payload == "answer|Alpha"
    and (.message | contains("Reply 1-3 (or A-C) to answer"))' \
   "" "$DEFER"
+
+# ── context keyword: the register payload carries the daemon's summary
+#    inputs — provider (headless binary), transcript_path (file tail),
+#    cwd (where the headless call runs) ──
+MSG_TYPE=register
+run_case_notify_payload "claude-register-context-fields" claude \
+  "$(payload Bash '{"command":"rm -rf /tmp/x"}')" \
+  '.provider == "claude" and (.transcript_path | type == "string")
+   and (.cwd | type == "string") and .session_id != ""' \
+  "" "$ASK"
+run_case_notify_payload "opencode-register-context-fields" opencode "$OPC_ASK" \
+  '.provider == "opencode" and .transcript_path == "" and .cwd != ""' "" ""
+MSG_TYPE=notify
 
 # ── body budget: over 1500 chars the body compresses instead of losing tail
 #    options — descriptions drop first, then option lines equal-share, so a

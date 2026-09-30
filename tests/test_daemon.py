@@ -855,5 +855,154 @@ class TestSnoozeReplies(unittest.TestCase):
         self.assertFalse(daemon_mod.TYPED_REPLY_RE.match("Notifications resumed"))
 
 
+class TestContextKeyword(unittest.TestCase):
+    """Typed 'context' while a prompt pends: a side notification carries an
+    assessed ≤10-line transcript summary; the prompt itself stays pending."""
+
+    def setUp(self):
+        self.d = daemon_mod.Daemon()
+        self.sent = []   # (title, message, req_id, actions, force)
+        p = mock.patch.object(
+            self.d, "send_ntfy",
+            side_effect=lambda cfg, t, m, r, actions=None, force=False: (
+                self.sent.append((t, m, r, actions, force)), True)[1],
+        )
+        p.start()
+        self.addCleanup(p.stop)
+        self.tf = os.path.join(HOME, "ctx-transcript.jsonl")
+        with open(self.tf, "w") as f:
+            for i in range(30):
+                f.write('{"type":"user","n":%d}\n' % i)
+        self.d.sessions["s1"] = {
+            "notify_title": "[proj] Bash",
+            "provider": "claude",
+            "transcript_path": self.tf,
+            "cwd": HOME,
+        }
+        self.d.pending["r1"] = "s1"
+        self.d.question_options["r1"] = ["One", "Two"]
+
+    def test_context_matches_typed_reply_regex(self):
+        self.assertTrue(daemon_mod.TYPED_REPLY_RE.match("context"))
+
+    def test_summary_notify_keeps_prompt_pending(self):
+        summary12 = "\n".join(f"line {i}" for i in range(1, 13))
+        with mock.patch.object(daemon_mod, "headless_summary",
+                               return_value=summary12) as hs:
+            self.d.handle_typed_reply("context")
+        hs.assert_called_once()
+        self.assertEqual(hs.call_args[0][0], "claude")     # provider first
+        self.assertEqual(len(self.sent), 1)
+        title, msg, req, actions, force = self.sent[0]
+        self.assertEqual(title, "[proj] Bash — context")
+        self.assertEqual(len(msg.splitlines()), 10)         # capped at 10
+        self.assertEqual(req, "r1")
+        self.assertEqual(actions, [])                       # no buttons
+        self.assertTrue(force)                              # bypasses snooze
+        # original prompt untouched — still answerable afterwards
+        self.assertEqual(self.d.pending, {"r1": "s1"})
+        self.assertEqual(self.d.question_options["r1"], ["One", "Two"])
+
+    def test_model_failure_falls_back_to_raw_tail_last_lines(self):
+        with mock.patch.object(daemon_mod, "headless_summary",
+                               return_value=None):
+            self.d.handle_typed_reply("context")
+        lines = self.sent[0][1].splitlines()
+        self.assertEqual(len(lines), 10)
+        self.assertEqual(lines[-1], '{"type":"user","n":29}')  # newest line
+        self.assertIn("r1", self.d.pending)
+
+    def test_no_transcript_notices_without_model_call(self):
+        self.d.sessions["s1"]["transcript_path"] = "/nonexistent/x"
+        with mock.patch.object(daemon_mod, "headless_summary") as hs:
+            self.d.handle_typed_reply("context")
+        hs.assert_not_called()
+        self.assertIn("No transcript", self.sent[0][1])
+        self.assertTrue(self.sent[0][4])
+        self.assertIn("r1", self.d.pending)
+
+    def test_opencode_session_reads_export(self):
+        self.d.sessions["s1"].update(provider="opencode", transcript_path="")
+        with mock.patch.object(daemon_mod, "opencode_export_tail",
+                               return_value="user: hi\nassistant: working") as ex, \
+             mock.patch.object(daemon_mod, "headless_summary",
+                               return_value="one\ntwo") as hs:
+            self.d.handle_typed_reply("context")
+        ex.assert_called_once_with("s1")
+        self.assertEqual(hs.call_args[0][0], "opencode")
+        self.assertEqual(self.sent[0][1], "one\ntwo")
+        self.assertIn("r1", self.d.pending)
+
+    def test_no_pending_prompt_notifies_nothing_to_summarize(self):
+        self.d.pending.clear()
+        self.d.handle_typed_reply("context")
+        self.assertIn("No pending prompt", self.sent[0][1])
+        self.assertTrue(self.sent[0][4])
+        self.assertEqual(self.d.pending, {})
+
+    def test_register_stores_context_fields(self):
+        reply = exchange(self.d, {
+            "type": "register", "session_id": "s9",
+            "provider": "codex", "transcript_path": "/tmp/t.jsonl",
+            "cwd": "/work",
+        })
+        self.assertEqual(reply, b"ok")
+        self.assertEqual(self.d.sessions["s9"]["provider"], "codex")
+        self.assertEqual(self.d.sessions["s9"]["transcript_path"],
+                         "/tmp/t.jsonl")
+        self.assertEqual(self.d.sessions["s9"]["cwd"], "/work")
+
+    def test_headless_summary_sets_guard_env_and_timeout(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen.update(kw)
+
+            class R:
+                returncode = 0
+                stdout = "ok\n"
+            return R()
+
+        with mock.patch.object(daemon_mod, "_find_bin",
+                               return_value="/bin/x"), \
+             mock.patch.object(daemon_mod.subprocess, "run", fake_run):
+            out = daemon_mod.headless_summary("claude", "tail", HOME, 7)
+        self.assertEqual(out, "ok\n")
+        self.assertEqual(seen["cmd"][:2], ["/bin/x", "-p"])
+        self.assertEqual(seen["env"]["HOOKLINE_CONTEXT_CHILD"], "1")
+        self.assertEqual(seen["timeout"], 7)
+        self.assertEqual(seen["cwd"], HOME)
+
+    def test_headless_summary_timeout_returns_none(self):
+        def fake_run(cmd, **kw):
+            raise daemon_mod.subprocess.TimeoutExpired(cmd, 1)
+
+        with mock.patch.object(daemon_mod, "_find_bin",
+                               return_value="/bin/x"), \
+             mock.patch.object(daemon_mod.subprocess, "run", fake_run):
+            self.assertIsNone(
+                daemon_mod.headless_summary("claude", "tail", HOME, 7))
+
+    def test_headless_summary_unknown_provider_skips_binary_lookup(self):
+        with mock.patch.object(daemon_mod, "_find_bin") as fb:
+            self.assertIsNone(
+                daemon_mod.headless_summary("mystery", "tail", HOME, 7))
+            fb.assert_not_called()
+
+    def test_fit_context_strips_ansi_and_caps(self):
+        text = "\x1b[32m" + "\n".join(f"l{i}" for i in range(15))
+        lines = daemon_mod.fit_context(text).splitlines()
+        self.assertEqual(len(lines), 10)
+        self.assertNotIn("\x1b", lines[0])
+        self.assertEqual(lines[0], "l0")
+
+    def test_fit_context_last_keeps_newest(self):
+        out = daemon_mod.fit_context("\n".join(str(i) for i in range(30)),
+                                     keep="last")
+        self.assertEqual(out.splitlines()[-1], "29")
+        self.assertEqual(len(out.splitlines()), 10)
+
+
 if __name__ == "__main__":
     unittest.main()
