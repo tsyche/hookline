@@ -19,8 +19,9 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.5.0 | 2026-09-27 | tagged release covering the Phase 6 rows below (codex adapter, response-file hardening, MCP matcher, changelog-promote, grok spike) |
 | v1.6.0 | 2026-09-29 | question-dialog phone flow (typed/word replies, extended window), setup wizard, `just check-gates`, opencode plugin tests |
 | v1.7.0 | 2026-09-29 | pattern management CLI, CONTRIBUTING.md, in-repo `.githooks/` + `just hooks` |
-| Phase 6 b3 | 2026-09-29 | unreleased: question-body compression, one-line install, version check, grok adapter, bare-terminal multi-session targeting |
-| Snooze | 2026-09-30 | unreleased: mute window (CLI + typed reply), watcher/daemon send guards |
+| Phase 6 b3 | 2026-09-29 | question-body compression, one-line install, version check, grok adapter, bare-terminal multi-session targeting |
+| Snooze | 2026-09-30 | mute window (CLI + typed reply), watcher/daemon send guards |
+| v1.8.0 | 2026-09-30 | release covering the rows above + Linux Tier 1, doctor per-provider checks, `context` keyword; Phase 6 complete |
 
 ## v1.1 — Stable (archived)
 
@@ -260,9 +261,9 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       example, roadmap question-flow entry); code comments exempt — ids live in untracked
       config + the code that consumes them
 
-## Phase 6 (batch 3) — question-body compression + grok adapter (shipped 2026-09-29, unreleased)
+## Phase 6 (batch 3) — question-body compression + grok adapter (shipped 2026-09-29, released v1.8.0)
 
-19. **Long question lists — chunked/compressed bodies** — done 2026-09-29 (unreleased)
+19. **Long question lists — chunked/compressed bodies** — done 2026-09-29 (v1.8.0)
     - Gap: the notification body truncated at 1500 chars, so a long option list (or verbose
       descriptions) lost options at the tail — typing still resolved any number, but the
       reader couldn't see what they were picking
@@ -278,7 +279,7 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       compressed 30-opt keeps every option + drops descriptions, long-label equal-share
       fit stays ≤1500, short question keeps its descriptions; 40 golden cases total)
 
-20. **grok adapter** — done 2026-09-29 (unreleased)
+20. **grok adapter** — done 2026-09-29 (v1.8.0)
     - Contract probed live on grok 1.0.44 before building: the claude `hookSpecificOutput`
       decision shape is accepted verbatim (`ask` forces grok's permission card even when a
       claude-compat allow rule would run the call; defer leaves grok's own rules in charge),
@@ -307,17 +308,17 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       allow → digit → file, deny → Ctrl+C, question defer → `answer|<label>` → digit,
       local answer during grace → cancel with no notification
 
-21. **One-line install** — done 2026-09-29 (unreleased), incl. the non-macOS fail-fast guard
+21. **One-line install** — done 2026-09-29 (v1.8.0), incl. the non-macOS fail-fast guard
     - `curl -fsSL … | bash` → tagged release tarball → `install.sh`; original entry:
       "Acceptance met: fresh machine install with no git checkout of the repo
       (`scripts/get-test.sh` — 12 offline cases)"
 
-22. **Version / upgrade check** — done 2026-09-29 (unreleased)
+22. **Version / upgrade check** — done 2026-09-29 (v1.8.0)
     - `hookline status` flags when the latest GitHub release tag is newer than the
       installed `VERSION` (recorded by `install.sh`); original entry: "Acceptance met:
       outdated install reports the newer tag; endpoint-down stays quiet"
 
-23. **Multi-session support (bare terminals)** — done 2026-09-29 (unreleased)
+23. **Multi-session support (bare terminals)** — done 2026-09-29 (v1.8.0)
     - `focus_prompt_window` (hooks/core.sh) runs before every keystroke injection —
       iTerm2 selects the window/tab by `TERM_SESSION_ID` UUID (live-probed), WezTerm
       activates the pane via `wezterm cli activate-pane --pane-id`; Terminal.app /
@@ -326,9 +327,9 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       (both adapters), so the terminal env rides the hook process — no daemon changes.
       Tests: `scripts/focus-test.sh` (15 dry-run cases, in `check-gates`)
 
-## Phase 8 item — snooze mode (shipped 2026-09-30, unreleased)
+## Phase 8 item — snooze mode (shipped 2026-09-30, released v1.8.0)
 
-24. **Snooze mode** — done 2026-09-30 (unreleased)
+24. **Snooze mode** — done 2026-09-30 (v1.8.0)
     - Mute-window file `~/.local/share/hookline/snooze` (future unix epoch), checked
       before every phone push: the hook's background watcher skips the whole
       daemon/legacy notify handoff and just watches the transcript for a local answer
@@ -344,3 +345,39 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       cases (active window → no notify reaches the daemon; expired window → normal
       notify), 10 daemon unit tests (send guard, force bypass, reply/button routing,
       pending untouched)
+
+## Phase 6 (batch 4) — doctor checks + `context` keyword (shipped 2026-09-30, v1.8.0)
+
+25. **`hookline doctor` per-provider registration checks** — done 2026-09-30 (v1.8.0)
+    - Original entry: "`doctor` verifies each enabled provider's registration the way
+      `status` does"
+    - The "Hook & registration" section now checks every provider `status` reports (grok
+      was the gap): registered-file check against `~/.grok/hooks/hookline.json` (no trust
+      step), joining claude settings, the opencode plugin file, and codex
+      registered+trusted; a missing provider → FAIL with a `bash install.sh` hint
+    - Verified: `scripts/doctor-test.sh` missing-provider matrix — claude/opencode/codex/
+      grok unregistered → FAIL, codex untrusted → FAIL, healthy case seeds all four green
+      (10 cases total)
+
+26. **`context` keyword — side-thread assessed summary** — done 2026-09-30 (v1.8.0)
+    - Original acceptance: "`context` during a pending prompt returns a ≤10-line summary
+      and the original prompt is still answerable by button/typed reply" — met
+    - Typed `context` on the main topic (matches `TYPED_REPLY_RE`) → separate notification
+      (`force=True` so the explicit request bypasses snooze; no buttons) with an assessed
+      ≤10-line summary; the pending prompt, its options, and its response file are never
+      touched (read-only side request)
+    - The hook's register payload gained `provider`/`transcript_path`/`cwd`; the daemon
+      runs the provider's own headless CLI over the transcript tail (`claude -p`,
+      `codex exec -s read-only` with the prompt on stdin, `grok -p`,
+      `opencode run --pure`) with `HOOKLINE_CONTEXT_CHILD=1` — the entry guard consumes
+      stdin and no-ops so the summarizer's own hooks can never start a second phone flow
+    - **Deviation from the spec:** opencode summarizes daemon-side too (spec said
+      plugin-side SDK session); opencode keeps no transcript file, so its tail comes from
+      a read-only `opencode export` (last 40 messages, role-tagged text)
+    - Fallback chain: model failure/timeout/missing binary → raw tail (last 10 lines,
+      ANSI-stripped, 1500-char budget, first 10 lines for model output / last 10 for
+      fallback); no transcript → notice; no pending prompt → notice
+    - Config: `HOOKLINE_CONTEXT_TIMEOUT` (default 45s); `blackbox` rides the `claude`
+      headless binary
+    - Verified: 12 daemon unit tests (`TestContextKeyword`), 2 golden register-payload
+      cases (claude + opencode), full `check-gates` green

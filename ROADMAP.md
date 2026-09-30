@@ -5,10 +5,10 @@
 > Multi-provider revival **Phases 0–4 shipped (2026-09-25)** as **v1.3.0** — `VERSION` is
 > the source of truth, and the release workflow tags and publishes on the first main push
 > that carries a `VERSION` change. Sections below are **phases** (the same scheme as
-> Phases 0–4, house convention across projects), ordered next-up first: Phase 6
-> onboarding → Phase 8 multi-session → Phase 9 Linux Tier 2 (Tier 1 systemd shipped,
-> acceptance pending) → Phase 7 remote
-> control + E2E (Phases 0–5 shipped).
+> Phases 0–4, house convention across projects), ordered next-up first: Phase 8
+> notification/UX → Phase 9 Linux Tier 2 (Tier 1 systemd shipped, acceptance pending)
+> → Phase 7 remote
+> control + E2E (Phases 0–6 shipped).
 
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
 > (2026-06) when Claude Code shipped native remote/mobile approvals — but that covers
@@ -43,9 +43,11 @@
 > **v1.7.0 tagged 2026-09-29** — pattern management CLI, CONTRIBUTING.md, in-repo
 > `.githooks/` + `just hooks`.
 > **v1.7.1 tagged 2026-09-29** — GNU/BSD `stat` fix (patterns mode restore on Linux
-> coreutils) + doc hygiene. **Unreleased on main:** version check, one-line install,
-> bare-terminal multi-session targeting, Linux Tier 1 (systemd install/daemon/watchdog),
-> question-body compression for long option lists, grok adapter, snooze mode.
+> coreutils) + doc hygiene.
+> **v1.8.0 tagged 2026-09-30** — version check, one-line install, bare-terminal
+> multi-session targeting, Linux Tier 1 (systemd install/daemon/watchdog), question-body
+> compression, grok adapter, snooze mode, doctor per-provider checks, `context` keyword —
+> **Phase 6 complete**. Details in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
 ## Goals
 
@@ -61,15 +63,17 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **`context` keyword — side-thread assessed summary** (~2–4h) — Phase 6 item
+1. **Notification metadata — know which alert is which at a glance** (~1–2h) — Phase 8 item (Tim add, 2026-09-30)
 2. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 8 item
-3. **`hookline doctor` per-provider registration checks** (~0.5h) — Phase 6 item
+3. **Bare-terminal screen capture beyond iTerm2** (~1–2h) — Phase 8 item
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
-> Version check, one-line install, bare-terminal multi-session targeting, question-body
-> compression, grok adapter, Linux Tier 1 (systemd), and snooze mode shipped 2026-09-29/30 (unreleased —
-> in `[Unreleased]`; Tier 1 acceptance run on a fresh Ubuntu box still pending).
+> The next round (`context`, doctor per-provider checks, disambiguation): `context` and
+> doctor shipped 2026-09-30 in **v1.8.0**, disambiguation carried over. Version check,
+> one-line install, bare-terminal multi-session targeting, question-body compression,
+> grok adapter, Linux Tier 1 (systemd), and snooze mode all shipped in **v1.8.0**
+> (Tier 1 acceptance run on a fresh Ubuntu box still pending).
 > Phase 7 remote control + E2E need on-device human steps.
 
 ## Phase 5 — Reliability & self-healing (complete)
@@ -79,38 +83,17 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 > sandbox tests, heartbeat ages in `status`, log rotation + quiet SSE reconnects.
 > All entries preserved in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-## Phase 6 — Onboarding & contributors (next)
+## Phase 6 — Onboarding & contributors (complete)
 
-> Items 1–3 (pattern CLI, CONTRIBUTING, in-repo git hooks) shipped 2026-09-29 in
-> **v1.7.0**; item 5 (question-dialog phone flow) shipped 2026-09-29 in **v1.6.0**;
-> one-line install, version check, question-body compression, and the
-> grok adapter shipped 2026-09-29 (unreleased —
-> in `[Unreleased]`, incl. the non-macOS install fail-fast guard);
-> the internal link check shipped 2026-09-25 with `check-docs` (stale entry — probe-verified
-> 2026-09-29). Details in the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
-
-1. **`context` keyword — side-thread assessed summary** (~2–4h)
-    - Type `context` while a question/permission is pending → a short assessed summary of
-      where the conversation stands (not just raw lines) arrives as a new notification; the
-      original prompt stays pending and is answered afterwards as usual
-    - opencode: plugin-side one-shot side session over the in-process SDK client (list
-      messages → prompt for summary → notify); claude/codex: headless CLI call
-      (`claude -p` / `codex exec`) fed the transcript tail; fallback to raw tail when the
-      model call fails or times out
-    - Acceptance: `context` during a pending prompt returns a ≤10-line summary and the
-      original prompt is still answerable by button/typed reply
-
-2. **`hookline doctor` per-provider registration checks** (~0.5h)
-    - `doctor` verifies each enabled provider's registration the way `status` does (grok
-      `~/.grok/hooks/hookline.json`, codex `~/.codex/hooks.json`, opencode plugin file,
-      claude settings entry) — today `status` reports grok/codex but `doctor` doesn't
-    - Acceptance: `scripts/doctor-test.sh` cases for each provider registered/missing
-
-3. **Release the unreleased batch** (~0.5h)
-    - Bump `VERSION` → CI auto-tags and releases everything in `[Unreleased]`
-      (question-body compression, one-line install, version check, grok adapter,
-      bare-terminal multi-session targeting, Linux Tier 1)
-    - 🧑 needs-human: release-timing go decision
+> **Phase 6 complete 2026-09-30, released as v1.8.0** — items 1–3 (pattern CLI,
+> CONTRIBUTING, in-repo git hooks) shipped 2026-09-29 in **v1.7.0**; item 5
+> (question-dialog phone flow) shipped 2026-09-29 in **v1.6.0**; one-line install,
+> version check, question-body compression, grok adapter shipped 2026-09-29; doctor
+> per-provider checks and the `context` keyword shipped 2026-09-30. The `context`
+> implementation deviates from this spec: all providers (opencode included) summarize
+> daemon-side via the provider's headless CLI — opencode's transcript tail comes from a
+> read-only `opencode export` instead of a plugin-side SDK session (documented in the
+> shipped ledger). All entries preserved in [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md).
 
 ## Phase 7 — Remote control + E2E
 
@@ -154,6 +137,7 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
 - **Typed-reply disambiguation for multiple pending prompts** — today a bare typed reply (`allow`/`deny`/`retry`, or an option number/letter) only resolves when exactly one prompt is pending (`handle_typed_reply` logs and drops otherwise); with 2+ providers prompting at once, buttons still work (they carry `req_id`) but typed text is ignored. Prompt-picker flow: one pending question → number picks its option; several pending → reply `1`/`2` to pick the prompt first, then the option. ~1–2h
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
+- **Notification metadata — know which alert is which at a glance** (~1–2h) — with several sessions prompting at once the phone stack is unreadable: title is only `[tmux-session / project] ToolName` (`core.sh` label) and the body opens straight into `$ cmd` — no provider, no work context. Add at minimum the provider to the title (`[claude] …` / `grok …`), and a body header line carrying identifying context (project, `git branch --show-current`, working dir or a short task label) before the command/details; keep every derived sender consistent (prompt, expiry, invalid-reply, `context` summary, daemon retry/feedback — they reuse `notify_title`). Config should be able to drop the context line (quiet mode / privacy). Acceptance: golden cases assert the new title+header shape per provider, all existing cases updated in one pass
 
 ## Phase 9 — Future
 
@@ -161,7 +145,7 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
 - **Direct mode via Tailscale / VPN** — zero relay dependency; the endpoint design (port `7676`, `/pending`, `/respond`) and mobile interface options (PWA, Shortcut, companion app) are specced in [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)
 - **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
 - **Linux support** — tiered, so tmux users get value first:
-  - **Tier 1 — daemon + tmux path: SHIPPED (unreleased; fresh-Ubuntu acceptance run
+  - **Tier 1 — daemon + tmux path: SHIPPED (v1.8.0; fresh-Ubuntu acceptance run
     still pending)** — `systemd --user` units replace the launchd plists (daemon +
     watchdog `StartInterval` → 60s `hookline-watchdog.timer`); `install.sh` /
     `uninstall.sh` / `hookline doctor|status|daemon` / the watchdog branch on the
