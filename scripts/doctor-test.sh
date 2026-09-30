@@ -143,17 +143,59 @@ run_case "empty-home" "$h" 1 \
   "skipped (no config)"
 
 # ── 2. healthy install: fake daemon + local ntfy → all green, rc=0 ──
+# Also the "every provider registered" case: claude settings (seeded by
+# new_home), opencode plugin, codex entry + trust line, grok entry.
 h=$(new_home "http://127.0.0.1:9")
 port=$(start_http_server "$h") || exit 1
 sed -i.bak "s|http://127.0.0.1:9|http://127.0.0.1:${port}|" "$h/.config/hookline/config" && rm -f "$h/.config/hookline/config.bak"
 mkdir -p "$h/.config/opencode/plugins"
 printf '%s' '// plugin' > "$h/.config/opencode/plugins/hookline.js"
+mkdir -p "$h/.codex" "$h/.grok/hooks"
+cat > "$h/.codex/hooks.json" <<'EOF'
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"$HOME/.local/share/hookline/hooks/hookline.sh\" codex || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+printf '[hooks.state."%s:permission_request:0:0"]\n' "$h/.codex/hooks.json" > "$h/.codex/config.toml"
+cat > "$h/.grok/hooks/hookline.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"$HOME/.local/share/hookline/hooks/hookline.sh\" grok || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
 start_fake_daemon "$h" || exit 1
 run_case "healthy-install" "$h" 0 \
   "daemon responsive (pid=" \
   "heartbeat 0s" \
   "sse 0s" \
   "reachable: http://127.0.0.1:${port}" \
+  "hook registered in" \
+  "OpenCode plugin installed" \
+  "codex hook registered" \
+  "codex hook trusted" \
+  "grok hook registered" \
   "0 failed"
 
 # ── 3. daemon down (no listener) → detected, fix disabled, rc=1 ──
@@ -193,6 +235,39 @@ run_case "healthy-systemd" "$h" 0 \
   "sse 0s" \
   "0 failed"
 CASE_INIT=launchd
+
+# ── 6–10. per-provider registration: present-but-unregistered → FAIL, rc=1 ──
+# Each seeds an otherwise-healthy HOME (claude already registered) and breaks
+# exactly one provider. No daemon/http: rc=1 either way, patterns carry the case.
+
+h=$(new_home "http://127.0.0.1:9")
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/opt/bin/foreign-hook"}]}]}}' \
+  > "$h/.claude/settings.json"
+run_case "claude-not-registered" "$h" 1 \
+  "hook NOT registered in $h/.claude/settings.json"
+
+h=$(new_home "http://127.0.0.1:9")
+mkdir -p "$h/.config/opencode"
+run_case "opencode-plugin-missing" "$h" 1 \
+  "OpenCode plugin missing"
+
+h=$(new_home "http://127.0.0.1:9")
+mkdir -p "$h/.codex"
+run_case "codex-not-registered" "$h" 1 \
+  "codex hook NOT registered"
+
+h=$(new_home "http://127.0.0.1:9")
+mkdir -p "$h/.codex"
+printf '%s\n' '{"hooks":{"PermissionRequest":[{"hooks":[{"type":"command","command":"/x/hookline.sh codex"}]}]}}' \
+  > "$h/.codex/hooks.json"
+run_case "codex-not-trusted" "$h" 1 \
+  "codex hook registered" \
+  "codex hook NOT trusted"
+
+h=$(new_home "http://127.0.0.1:9")
+mkdir -p "$h/.grok/hooks"
+run_case "grok-not-registered" "$h" 1 \
+  "grok hook NOT registered"
 
 echo
 echo "doctor-test: $PASS passed, $FAIL failed"

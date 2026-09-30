@@ -977,6 +977,14 @@ cmd_doctor() {
       doc_fail "codex hook NOT registered — run: bash install.sh"
     fi
   fi
+  GROK_HOOKS="${HOME}/.grok/hooks/hookline.json"
+  if [ -d "${HOME}/.grok" ]; then
+    if [ -f "$GROK_HOOKS" ] && jq -e '.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$GROK_HOOKS" &>/dev/null; then
+      doc_ok "grok hook registered"
+    else
+      doc_fail "grok hook NOT registered — run: bash install.sh"
+    fi
+  fi
   echo
 
   echo "── Daemon"
