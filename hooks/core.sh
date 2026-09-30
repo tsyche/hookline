@@ -139,6 +139,9 @@ fit_question_body() {
 build_question_message() {
   local qcount nopts multiple bc=0 body compressed fit
   local budget=1500
+  # the metadata header (core_main prepends it) rides inside the same body
+  # budget, so the ntfy cap and the ≤1530 golden assertion still hold
+  [ -n "$ALERT_HEADER" ] && budget=$(( budget - ${#ALERT_HEADER} - 2 ))
   body=$(echo "$INPUT" | jq -r '
     def qs: (.questions // .tool_input.questions // []);
     [qs[] |
@@ -277,6 +280,17 @@ core_main() {
     SESSION_LABEL="$PROJECT"
   fi
 
+  # Alert metadata: the provider rides every title (`[claude · session/project]`);
+  # project/branch/dir ride a body header line so several concurrent sessions are
+  # tellable apart at a glance. HOOKLINE_ALERT_HEADER=0 drops the body line only
+  # (privacy) — the title tag always stays.
+  BRANCH=""
+  ALERT_HEADER=""
+  if [ "${HOOKLINE_ALERT_HEADER:-1}" != "0" ]; then
+    BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || true)
+    ALERT_HEADER="$PROJECT${BRANCH:+ · $BRANCH} · $CWD"
+  fi
+
   REQ_ID="$(date +%s)-$$"
   PARENT_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
 
@@ -315,6 +329,12 @@ core_main() {
 
   # 3. Build notification message
   adapter_build_message
+
+  # Metadata header first, then the adapter's body — one place covers the
+  # daemon notify, the legacy direct path, and every question body.
+  if [ -n "$ALERT_HEADER" ]; then
+    NOTIFY_MSG="$ALERT_HEADER"$'\n\n'"$NOTIFY_MSG"
+  fi
 
   GRACE_PERIOD="${HOOKLINE_GRACE_PERIOD:-20}"
   PHONE_TIMEOUT="${HOOKLINE_PHONE_TIMEOUT:-900}"
@@ -358,7 +378,8 @@ core_main() {
       --arg provider "$PROVIDER" \
       --arg transcript_path "${TRANSCRIPT_PATH:-}" \
       --arg cwd "$CWD" \
-      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane,tmux_socket:$tmux_socket,provider:$provider,transcript_path:$transcript_path,cwd:$cwd}')"
+      --arg alert_header "$ALERT_HEADER" \
+      '{type:$type,session_id:$session_id,tty:$tty,term_program:$term_program,tmux_pane:$tmux_pane,tmux_socket:$tmux_socket,provider:$provider,transcript_path:$transcript_path,cwd:$cwd,alert_header:$alert_header}')"
     log "registered session with daemon"
   fi
 
@@ -400,12 +421,13 @@ core_main() {
       if [ "${EXTENDED_WAIT:-0}" -gt 0 ]; then
         _msg="${_msg}; phone still listening $((EXTENDED_WAIT / 60))m (reply retry)"
       fi
+      [ -n "$ALERT_HEADER" ] && _msg="$ALERT_HEADER"$'\n\n'"$_msg"
       local _auth=()
       [ -n "$HOOKLINE_NTFY_USERNAME" ] && _auth=(-u "${HOOKLINE_NTFY_USERNAME}:${HOOKLINE_NTFY_PASSWORD}")
       curl -s "${_auth[@]}" -H "Content-Type: application/json" \
         -d "$(jq -nc \
           --arg topic "$_topic" \
-          --arg title "[$SESSION_LABEL] Prompt expired" \
+          --arg title "[$PROVIDER · $SESSION_LABEL] Prompt expired" \
           --arg message "$_msg" \
           '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
         "${_server}/" &>/dev/null
@@ -451,7 +473,7 @@ core_main() {
           --arg type "notify" \
           --arg session_id "$SESSION_ID" \
           --arg req_id "$current_req_id" \
-          --arg title "[$SESSION_LABEL] $TOOL_NAME" \
+          --arg title "[$PROVIDER · $SESSION_LABEL] $TOOL_NAME" \
           --arg message "$NOTIFY_MSG" \
           --arg response_file "$RESPONSE_FILE" \
           --argjson max_retries "$MAX_RETRIES" \
@@ -590,7 +612,7 @@ core_main() {
       ntfy_resp=$(curl -s "${AUTH_ARGS[@]}" -H "Content-Type: application/json" \
         -d "$(jq -nc \
           --arg topic "$TOPIC" \
-          --arg title "[$SESSION_LABEL] $TOOL_NAME" \
+          --arg title "[$PROVIDER · $SESSION_LABEL] $TOOL_NAME" \
           --arg message "$NOTIFY_MSG" \
           --argjson actions "$actions_json" \
           '{topic:$topic,title:$title,message:$message,priority:4,tags:["lock"],

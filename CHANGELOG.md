@@ -6,6 +6,10 @@ Notable changes per release. Format: [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- Alert metadata — every notification identifies itself at a glance: titles are now `[provider · session/project] ToolName` (prompt, expiry, and the daemon's derived notices all ride the same `notify_title`) and bodies open with a `project · branch · directory` header line before the command or question. The hook computes the header once, prepends it to every notification body (daemon notify, legacy direct path, expiry, question bodies — the question budget reserves room for it), and registers it with the session so invalid-reply corrections and `context` summaries prepend it too. `HOOKLINE_ALERT_HEADER=0` drops the body line only — the title tag stays (privacy). Tests: 3 golden metadata cases (claude title+header, opencode, header-off) + daemon unit coverage (register field, invalid-reply and context header)
+
 ## [1.8.0] - 2026-09-30
 
 ### Added

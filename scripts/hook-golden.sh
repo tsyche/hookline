@@ -63,6 +63,10 @@ CFG
       # stale window (60s in the past): notifies exactly like no snooze
       echo $(( $(date +%s) - 60 )) > "$h/.local/share/hookline/snooze"
       ;;
+    header-off)
+      # privacy: body metadata header line off, provider title tag stays
+      printf 'HOOKLINE_ALERT_HEADER=0\n' >> "$h/.config/hookline/config"
+      ;;
   esac
 }
 
@@ -365,6 +369,25 @@ run_case_notify_payload "claude-register-context-fields" claude \
 run_case_notify_payload "opencode-register-context-fields" opencode "$OPC_ASK" \
   '.provider == "opencode" and .transcript_path == "" and .cwd != ""' "" ""
 MSG_TYPE=notify
+
+# ── notification metadata: provider rides the title, project/branch/dir the
+#    body's first line; HOOKLINE_ALERT_HEADER=0 keeps the title, drops the
+#    body line (fixture cwd is not a repo → header has no branch segment) ──
+run_case_notify_payload "claude-notify-metadata" claude \
+  "$(payload Bash '{"command":"rm -rf /tmp/x"}')" \
+  '.title == "[claude · hookline-golden-proj] Bash"
+   and (.message | startswith("hookline-golden-proj · /tmp/hookline-golden-proj\n\n"))
+   and (.message | contains("$ rm -rf /tmp/x"))' \
+  "" "$ASK"
+run_case_notify_payload "opencode-notify-metadata" opencode "$OPC_ASK" \
+  '.title == "[opencode · hookline] bash"
+   and (.message | test("^hookline · "))
+   and (.message | contains("rm -rf /tmp/x"))' "" ""
+run_case_notify_payload "claude-metadata-header-off" claude \
+  "$(payload Bash '{"command":"rm -rf /tmp/x"}')" \
+  '.title == "[claude · hookline-golden-proj] Bash"
+   and (.message | startswith("$ rm -rf /tmp/x"))' \
+  header-off "$ASK"
 
 # ── body budget: over 1500 chars the body compresses instead of losing tail
 #    options — descriptions drop first, then option lines equal-share, so a

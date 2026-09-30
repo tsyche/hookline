@@ -494,6 +494,16 @@ class TestTypedReply(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)   # feedback, not resolution
         self.assertIn("r1", self.d.pending)
 
+    def test_invalid_reply_carries_alert_header(self):
+        with self.arm():
+            self.d.sessions["s1"]["alert_header"] = "proj · main · /work"
+            self.d.handle_typed_reply("9")
+        self.assertEqual(len(self.sent), 1)
+        title, msg, req, actions = self.sent[0]
+        self.assertTrue(msg.startswith("proj · main · /work\n\n"))
+        self.assertIn("Reply 1-4 (or A-D)", msg)
+        self.assertEqual(req, "r1")
+
     def test_word_guess_without_question_is_silent(self):
         self.d.sessions["s1"] = {"response_file": "/tmp/r"}
         self.d.pending["r1"] = "s1"
@@ -878,6 +888,7 @@ class TestContextKeyword(unittest.TestCase):
             "provider": "claude",
             "transcript_path": self.tf,
             "cwd": HOME,
+            "alert_header": "proj · main · /work",
         }
         self.d.pending["r1"] = "s1"
         self.d.question_options["r1"] = ["One", "Two"]
@@ -895,7 +906,8 @@ class TestContextKeyword(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)
         title, msg, req, actions, force = self.sent[0]
         self.assertEqual(title, "[proj] Bash — context")
-        self.assertEqual(len(msg.splitlines()), 10)         # capped at 10
+        self.assertEqual(len(msg.splitlines()), 12)         # 2 header + 10
+        self.assertTrue(msg.startswith("proj · main · /work\n\n"))
         self.assertEqual(req, "r1")
         self.assertEqual(actions, [])                       # no buttons
         self.assertTrue(force)                              # bypasses snooze
@@ -908,7 +920,7 @@ class TestContextKeyword(unittest.TestCase):
                                return_value=None):
             self.d.handle_typed_reply("context")
         lines = self.sent[0][1].splitlines()
-        self.assertEqual(len(lines), 10)
+        self.assertEqual(len(lines), 12)          # 2 header + 10 tail lines
         self.assertEqual(lines[-1], '{"type":"user","n":29}')  # newest line
         self.assertIn("r1", self.d.pending)
 
@@ -930,7 +942,8 @@ class TestContextKeyword(unittest.TestCase):
             self.d.handle_typed_reply("context")
         ex.assert_called_once_with("s1")
         self.assertEqual(hs.call_args[0][0], "opencode")
-        self.assertEqual(self.sent[0][1], "one\ntwo")
+        self.assertTrue(self.sent[0][1].endswith("one\ntwo"))
+        self.assertTrue(self.sent[0][1].startswith("proj · main · /work\n\n"))
         self.assertIn("r1", self.d.pending)
 
     def test_no_pending_prompt_notifies_nothing_to_summarize(self):
@@ -944,13 +957,15 @@ class TestContextKeyword(unittest.TestCase):
         reply = exchange(self.d, {
             "type": "register", "session_id": "s9",
             "provider": "codex", "transcript_path": "/tmp/t.jsonl",
-            "cwd": "/work",
+            "cwd": "/work", "alert_header": "proj · main · /work",
         })
         self.assertEqual(reply, b"ok")
         self.assertEqual(self.d.sessions["s9"]["provider"], "codex")
         self.assertEqual(self.d.sessions["s9"]["transcript_path"],
                          "/tmp/t.jsonl")
         self.assertEqual(self.d.sessions["s9"]["cwd"], "/work")
+        self.assertEqual(self.d.sessions["s9"]["alert_header"],
+                         "proj · main · /work")
 
     def test_headless_summary_sets_guard_env_and_timeout(self):
         seen = {}

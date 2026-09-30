@@ -515,17 +515,21 @@ class Daemon:
             session_id = self.pending.get(req_id, '')
             session = dict(self.sessions.get(session_id, {}))
             title = session.get('notify_title', 'hookline')
+            header = session.get('alert_header') or ''
         n = len(options)
         if n <= 0:
             return
         hint = f"1-{n}"
         if n <= 26:
             hint += f" (or A-{chr(ord('A') + n - 1)})"
+        body = (f"'{text}' is not a valid answer for this question.\n"
+                f"Reply {hint}, retry, or deny.")
+        if header:
+            body = header + "\n\n" + body
         self.send_ntfy(
             load_config(),
             f"{title} — invalid reply",
-            f"'{text}' is not a valid answer for this question.\n"
-            f"Reply {hint}, retry, or deny.",
+            body,
             req_id,
             actions=[
                 {'label': 'Retry', 'payload': 'retry'},
@@ -614,6 +618,9 @@ class Daemon:
             summary = fit_context(summary or transcript,
                                   keep='first' if summary else 'last')
         title = session.get('notify_title') or 'hookline'
+        header = session.get('alert_header') or ''
+        if header:
+            summary = header + "\n\n" + summary
         self.send_ntfy(config, f'{title} — context', summary, req_id, [],
                        force=True)
 
@@ -778,10 +785,13 @@ class Daemon:
                         'tmux_pane':       msg.get('tmux_pane', ''),
                         'tmux_socket':     msg.get('tmux_socket', ''),
                         # context-keyword inputs: headless binary choice,
-                        # transcript source, working directory
+                        # transcript source, working directory — plus the
+                        # alert header line (project/branch/dir) so derived
+                        # notifications carry the same identifying metadata
                         'provider':        msg.get('provider', ''),
                         'transcript_path': msg.get('transcript_path', ''),
                         'cwd':             msg.get('cwd', ''),
+                        'alert_header':    msg.get('alert_header', ''),
                     })
                 self.log.info(
                     f"registered session {session_id[:8]} "

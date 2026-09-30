@@ -91,6 +91,15 @@ You can also type a reply in the ntfy channel instead of tapping: `allow`,
 `deny`, or `retry` work anywhere a button would, and `context` (see below)
 summarizes the session when you've lost the thread.
 
+### Alert metadata
+
+Every notification identifies itself at a glance — several sessions prompting at
+once stay tellable apart. The title carries the provider and session
+(`[claude · mysession / myrepo] Bash`) and the body opens with
+`project · branch · directory` before the command or question. Expiry notices,
+invalid-reply corrections, and `context` summaries carry the same metadata.
+Set `HOOKLINE_ALERT_HEADER=0` to drop the body line (the title tag stays).
+
 ### Late replies (extended window)
 
 After `HOOKLINE_PHONE_TIMEOUT` the phone gets a "Prompt expired" notice, but the
@@ -212,6 +221,8 @@ HOOKLINE_MAX_RETRIES=3                   # number of Retry button taps allowed
 HOOKLINE_NTFY_USERNAME=""               # for self-hosted ntfy with auth
 HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
 HOOKLINE_PROVIDERS="claude codex opencode grok"    # provider registry; unset = all enabled
+HOOKLINE_ALERT_HEADER=1                # body metadata line (project · branch · dir); 0 = title tag only
+HOOKLINE_CONTEXT_TIMEOUT=45            # seconds a typed `context` summary may take
 ```
 
 Changes take effect immediately — no reinstall needed. `hookline setup` walks through
@@ -320,6 +331,7 @@ See [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control) for au
 - **SSE-based daemon** — persistent connection for instant response; no polling delay
 - **Retry button** — instant resend without re-waiting the grace period
 - **Typed replies** — option numbers/letters plus `retry`/`deny` words from the ntfy channel, and `context` for an on-demand summary of where the conversation stands; invalid replies get a correction notification
+- **Alert metadata** — provider in the title, project/branch/directory as the body's first line, so concurrent sessions are tellable apart at a glance (`HOOKLINE_ALERT_HEADER=0` for privacy)
 - **Extended window** — late answers still land for up to an hour after the phone timeout
 - **Fallback mode** — works without the daemon via inline polling
 - **Multi-provider registry** — Claude, Codex, OpenCode, and adapter-shaped future agents behind one core
