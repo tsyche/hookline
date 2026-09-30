@@ -45,7 +45,7 @@
 > **v1.7.1 tagged 2026-09-29** — GNU/BSD `stat` fix (patterns mode restore on Linux
 > coreutils) + doc hygiene. **Unreleased on main:** version check, one-line install,
 > bare-terminal multi-session targeting, Linux Tier 1 (systemd install/daemon/watchdog),
-> question-body compression for long option lists, grok adapter.
+> question-body compression for long option lists, grok adapter, snooze mode.
 
 ## Goals
 
@@ -61,14 +61,14 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Snooze mode** (~1–2h) — Phase 8 item
-2. **`context` keyword — side-thread assessed summary** (~2–4h) — Phase 6 item
-3. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 8 item
+1. **`context` keyword — side-thread assessed summary** (~2–4h) — Phase 6 item
+2. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 8 item
+3. **`hookline doctor` per-provider registration checks** (~0.5h) — Phase 6 item
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 > Version check, one-line install, bare-terminal multi-session targeting, question-body
-> compression, grok adapter, and Linux Tier 1 (systemd) shipped 2026-09-29 (unreleased —
+> compression, grok adapter, Linux Tier 1 (systemd), and snooze mode shipped 2026-09-29/30 (unreleased —
 > in `[Unreleased]`; Tier 1 acceptance run on a fresh Ubuntu box still pending).
 > Phase 7 remote control + E2E need on-device human steps.
 
@@ -147,7 +147,6 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
   Terminal.app / WezTerm capture with the same graceful no-inject fallback (unreadable
   screen → prompt stays, no keys sent)
 - **Multi-session support (tmux)** — already works; each session registers its own `tmux_pane_id` and daemon injects to the correct pane directly
-- **Snooze mode** — "I'm at my desk for 60 min, skip phone notifications" toggle via `hookline snooze 60` or a phone button; sets a lock file the background process checks
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
 - **Companion app — one-tap deep link to the right session** — a small Android companion app that registers a custom URL scheme (e.g. `hookline://connect?host=mac&session=hookline`). hookline embeds the connect command (including the exact tmux session for the project that fired) as a `view`-action button on the notification; tapping it opens the app, which fires Termux's `RUN_COMMAND` intent with the *typed* extras Termux needs (boolean `RUN_COMMAND_BACKGROUND=false`, `String[]` arguments) — the thing a bare `ssh://` link or a string-only ntfy broadcast can't do. Lands you directly in the correct session, no manual picker. Why a companion app and not config + ConnectBot/Tasker: Termux registers no URL scheme, and ntfy can only send string intent extras, so the only clean Android paths are (a) ConnectBot as an `ssh://` handler — separate app, bare shell, or (b) a Tasker/MacroDroid bridge — paid/fragile, terrible onboarding. A first-party app owns the whole bridge with zero third-party glue. **Endgame:** the same app can grow a persistent connection straight to the hookline daemon (see [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)) — at which point it receives the approval request *and* launches the session in-process, dropping the ntfy dependency on the receive side entirely. (Tracked here after a manual-flow decision: today, a missed prompt just sends a plain "prompt expired" notification and you connect by hand — VPN → Termux → `mac` → pick session.)

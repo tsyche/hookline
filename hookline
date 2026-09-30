@@ -49,6 +49,10 @@ VERSION_FILE="${HOME}/.local/share/hookline/VERSION"
 PYBIN="/usr/bin/python3"
 [ -x "$PYBIN" ] || PYBIN="$(command -v python3)"
 
+# Phone-notification mute window (see cmd_snooze); the background watcher
+# (hooks/core.sh) and the daemon check the same file before any ntfy push.
+SNOOZE_FILE="${HOME}/.local/share/hookline/snooze"
+
 usage() {
   cat <<EOF
 usage: hookline <command>
@@ -67,10 +71,53 @@ Commands:
                   Remove one allowlist entry (bare patterns get wrapped in Bash(...))
   clear-patterns [--global]
                   Wipe the project allowlist (global only with --global)
+  snooze [minutes|off]
+                  Mute phone notifications for N minutes (no arg = status)
   enable          Re-enable hookline after a disable
   disable         Disable hookline (all tools auto-approved silently)
   help            Show this help
 EOF
+}
+
+# ── snooze ────────────────────────────────────────────────────────────────────
+
+snooze_format_time() { # epoch → local HH:MM (BSD/GNU date differ; python agrees)
+  "$PYBIN" -c 'import sys, time; print(time.strftime("%H:%M", time.localtime(int(sys.argv[1]))))' "$1"
+}
+
+cmd_snooze() {
+  local arg="${1:-}" now exp left
+  now=$(date +%s)
+  case "$arg" in
+    "")
+      exp=$(cat "$SNOOZE_FILE" 2>/dev/null || true)
+      case "$exp" in
+        ''|*[!0-9]*) echo "snooze: off (no phone notifications muted)" ;;
+        *)
+          if [ "$exp" -gt "$now" ]; then
+            left=$(( (exp - now + 59) / 60 ))
+            echo "snooze: active — muted until $(snooze_format_time "$exp") (${left}m left)"
+          else
+            echo "snooze: off (window expired)"
+          fi
+          ;;
+      esac
+      ;;
+    0|off|clear)
+      rm -f "$SNOOZE_FILE"
+      echo "snooze cleared — phone notifications enabled"
+      ;;
+    *[!0-9]*)
+      echo "hookline snooze: minutes must be a positive integer (or off)" >&2
+      return 1
+      ;;
+    *)
+      exp=$(( now + 10#$arg * 60 ))
+      mkdir -p "$(dirname "$SNOOZE_FILE")"
+      echo "$exp" > "$SNOOZE_FILE"
+      echo "snooze: phone notifications muted for ${arg}m (until $(snooze_format_time "$exp"))"
+      ;;
+  esac
 }
 
 # ── enable / disable ──────────────────────────────────────────────────────────
@@ -758,6 +805,21 @@ cmd_status() {
     echo
   fi
 
+  SNOOZE_EXP=$(cat "$SNOOZE_FILE" 2>/dev/null || true)
+  NOW=$(date +%s)
+  echo "── snooze"
+  case "$SNOOZE_EXP" in
+    ''|*[!0-9]*) echo "  off" ;;
+    *)
+      if [ "$SNOOZE_EXP" -gt "$NOW" ]; then
+        echo "  active — muted until $(snooze_format_time "$SNOOZE_EXP") ($(( (SNOOZE_EXP - NOW + 59) / 60 ))m left)"
+      else
+        echo "  off (window expired)"
+      fi
+      ;;
+  esac
+  echo
+
   echo "── Hook file ($HOOK_DST)"
   if [ -f "$HOOK_DST" ]; then
     echo "  installed ✓  ($(wc -l < "$HOOK_DST" | tr -d ' ') lines)"
@@ -1060,6 +1122,7 @@ case "${1:-help}" in
   patterns)       cmd_patterns ;;
   remove-pattern) shift; cmd_remove_pattern "$@" ;;
   clear-patterns) shift; cmd_clear_patterns "$@" ;;
+  snooze)         shift; cmd_snooze "$@" ;;
   enable)         cmd_enable ;;
   disable)        cmd_disable ;;
   help|--help|-h) usage ;;

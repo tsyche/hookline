@@ -99,6 +99,23 @@ including a typed `retry` or a button tap on the earlier notification — and th
 expiry notice says how long you have. When the window closes, the watcher gives
 up and the prompt is terminal-only again.
 
+### Snooze
+
+At your desk and don't want the phone buzzing? Mute the phone channel without
+touching the terminal prompt:
+
+```bash
+hookline snooze 60    # no phone pushes for 60m
+hookline snooze       # status: active window + minutes left (or off/expired)
+hookline snooze off   # clear (also: 0 / clear)
+```
+
+While snoozed, prompts stay at the terminal — answering there works as usual
+(the watcher still detects a local answer and expiry notices don't push
+either). From the ntfy app, type `snooze` (60m) or `snooze 15` while a prompt
+is pending; the confirmation carries an **Unsnooze** button (or type
+`unsnooze`). `hookline status` shows the current window.
+
 ### Question dialogs (OpenCode + Claude Code)
 
 When OpenCode asks a question (`question.asked`) or Claude Code shows an
@@ -200,6 +217,7 @@ hookline daemon status        # daemon pid, sessions, pending approvals, heartbe
 hookline patterns             # list allowlist entries (project + global settings)
 hookline remove-pattern <p>   # drop one entry (`--global` for the global file)
 hookline clear-patterns       # wipe the project allowlist (`--global` for global)
+hookline snooze [minutes|off] # mute phone notifications (no arg = status)
 ```
 
 If phone notifications stop arriving, run `hookline doctor` — it checks the
@@ -219,6 +237,7 @@ just test-plugin    # opencode plugin unit tests (node --test)
 just doctor-test    # sandboxed `hookline doctor` report tests
 just status-test    # sandboxed `hookline status` report tests
 just patterns-test  # sandboxed `hookline patterns`/`remove-pattern`/`clear-patterns` tests
+just snooze-test    # sandboxed `hookline snooze` window tests (fake HOME, no network)
 just install-test   # sandboxed install/uninstall round-trip tests
 just get-test       # sandboxed get.sh one-line install tests (file:// tarball)
 just focus-test     # sandboxed bare-terminal focus-targeting tests (dry-run)

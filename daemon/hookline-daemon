@@ -27,6 +27,7 @@ PID_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.pid")
 LOG_PATH      = os.path.expanduser("~/.local/share/hookline/daemon.log")
 CONFIG_PATH   = os.path.expanduser("~/.config/hookline/config")
 THROTTLE_PATH = os.path.expanduser("~/.local/share/hookline/ntfy-throttle")
+SNOOZE_PATH   = os.path.expanduser("~/.local/share/hookline/snooze")
 HEARTBEAT_PATH     = os.path.expanduser("~/.local/share/hookline/heartbeat")
 SSE_HEARTBEAT_PATH = os.path.expanduser("~/.local/share/hookline/sse-heartbeat")
 
@@ -37,11 +38,42 @@ SSE_HEARTBEAT_PATH = os.path.expanduser("~/.local/share/hookline/sse-heartbeat")
 SSE_READ_TIMEOUT = 300
 
 # Bare replies accepted from the main topic (typed in the ntfy app): short
-# alnum only — option numbers/letters ("4"/"D"), retry/allow/deny words, and
-# misses like "two" that get routed to invalid-reply feedback. Multi-char
-# bodies with spaces/punctuation are our own notification echoes — never
-# parsed as decisions.
-TYPED_REPLY_RE = re.compile(r'^[0-9A-Za-z]{1,12}$')
+# alnum only — option numbers/letters ("4"/"D"), retry/allow/deny/snooze/
+# unsnooze words, and misses like "two" that get routed to invalid-reply
+# feedback. The one spaced form allowed is "snooze <minutes>"; any other
+# multi-char body with spaces/punctuation is our own notification echo —
+# never parsed as decision.
+TYPED_REPLY_RE = re.compile(r'^(?:[0-9A-Za-z]{1,12}|snooze [0-9]{1,4})$')
+
+
+# ── snooze ────────────────────────────────────────────────────────────────────
+# Phone-notification mute window set by `hookline snooze N` or a typed
+# "snooze [minutes]" reply. The file holds a future unix epoch; every send
+# path checks it (here in send_ntfy, and again in the hook's watcher before
+# it hands a notify to the daemon). The terminal prompt is never affected.
+
+def snooze_active(path=None):
+    try:
+        with open(path or SNOOZE_PATH) as f:
+            return int(f.read().strip()) > int(time.time())
+    except (OSError, ValueError):
+        return False
+
+
+def set_snooze(minutes, path=None):
+    path = path or SNOOZE_PATH
+    exp = int(time.time()) + minutes * 60
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        f.write(str(exp))
+    return exp
+
+
+def clear_snooze(path=None):
+    try:
+        os.remove(path or SNOOZE_PATH)
+    except FileNotFoundError:
+        pass
 
 # daemon.log is append-only and used to grow forever (plus the launchd plist
 # points stdout/stderr at it). Cap it: one rotated backup, then overwrite.
@@ -144,7 +176,13 @@ class Daemon:
         with open(THROTTLE_PATH, 'w') as f:
             f.write(str(time.time()))
 
-    def send_ntfy(self, config, title, message, req_id, actions=None):
+    def send_ntfy(self, config, title, message, req_id, actions=None,
+                  force=False):
+        # force = snooze confirmations/resume notices, which must go out
+        # even while a window is (being) active.
+        if not force and snooze_active():
+            self.log.info(f"[{req_id[:16]}] snoozed, skipping phone notification")
+            return False
         self._throttle()
         topic      = config.get('HOOKLINE_TOPIC', '')
         server     = config.get('HOOKLINE_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
@@ -267,6 +305,15 @@ class Daemon:
         """
         low = text.lower()
 
+        # Snooze controls run before anything prompt-shaped: they never
+        # resolve a pending prompt, they only flip the mute window.
+        if low in ('snooze', 'unsnooze') or low.startswith('snooze '):
+            if low == 'unsnooze':
+                self._handle_unsnooze()
+            else:
+                self._handle_snooze_reply(low)
+            return
+
         if low in ('allow', 'deny', 'retry'):
             with self.lock:
                 pend = list(self.pending)
@@ -347,7 +394,40 @@ class Daemon:
             ],
         )
 
+    def _handle_snooze_reply(self, text):
+        """Typed 'snooze [minutes]': open a mute window, confirm on the phone."""
+        minutes = 60
+        parts = text.split()
+        if len(parts) > 1:
+            try:
+                minutes = int(parts[1])
+            except ValueError:
+                minutes = -1
+        if not 1 <= minutes <= 10080:
+            self.send_ntfy(load_config(), 'hookline',
+                           'Snooze: minutes must be 1-10080', '', [], force=True)
+            return
+        exp = set_snooze(minutes)
+        self.log.info(f"snoozed {minutes}m until {exp}")
+        self.send_ntfy(
+            load_config(), 'hookline',
+            f'Phone notifications snoozed for {minutes}m '
+            f'(until {time.strftime("%H:%M", time.localtime(exp))})',
+            '', [{'label': 'Unsnooze', 'payload': 'unsnooze'}], force=True)
+
+    def _handle_unsnooze(self):
+        """Typed or tapped 'unsnooze': clear the mute window, confirm."""
+        clear_snooze()
+        self.log.info('snooze cleared')
+        self.send_ntfy(load_config(), 'hookline', 'Notifications resumed',
+                       '', [], force=True)
+
     def handle_response(self, req_id, decision):
+        # Unsnooze button lands here: response-topic body "unsnooze|" →
+        # decision 'unsnooze', empty req_id — before any pending lookup.
+        if decision == 'unsnooze':
+            self._handle_unsnooze()
+            return
         with self.lock:
             session_id = self.pending.get(req_id)
         if not session_id:

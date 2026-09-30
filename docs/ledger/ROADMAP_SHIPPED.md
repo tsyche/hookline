@@ -20,6 +20,7 @@ live only in untracked config (`~/.config/hookline/config`).
 | v1.6.0 | 2026-09-29 | question-dialog phone flow (typed/word replies, extended window), setup wizard, `just check-gates`, opencode plugin tests |
 | v1.7.0 | 2026-09-29 | pattern management CLI, CONTRIBUTING.md, in-repo `.githooks/` + `just hooks` |
 | Phase 6 b3 | 2026-09-29 | unreleased: question-body compression, one-line install, version check, grok adapter, bare-terminal multi-session targeting |
+| Snooze | 2026-09-30 | unreleased: mute window (CLI + typed reply), watcher/daemon send guards |
 
 ## v1.1 — Stable (archived)
 
@@ -324,3 +325,22 @@ Plan: `~/.claude/plans/archive/hookline-multi-provider.md`.
       stays fragile, deliberately untouched); tmux already pane-exact. Watchers inject
       (both adapters), so the terminal env rides the hook process — no daemon changes.
       Tests: `scripts/focus-test.sh` (15 dry-run cases, in `check-gates`)
+
+## Phase 8 item — snooze mode (shipped 2026-09-30, unreleased)
+
+24. **Snooze mode** — done 2026-09-30 (unreleased)
+    - Mute-window file `~/.local/share/hookline/snooze` (future unix epoch), checked
+      before every phone push: the hook's background watcher skips the whole
+      daemon/legacy notify handoff and just watches the transcript for a local answer
+      (prompt stays at the terminal; expiry notices suppressed); the daemon's
+      `send_ntfy` guards retries/feedback with a `force` bypass for confirmations
+    - `hookline snooze [minutes|off|clear|0]` sets/clears/reports the window;
+      `hookline status` gained a `── snooze` section
+    - Phone side: typed `snooze` / `snooze <minutes>` / `unsnooze` from the ntfy app
+      (one spaced form allowed in `TYPED_REPLY_RE`); the confirmation carries an
+      Unsnooze button that routes through the response-topic handler; neither form
+      ever resolves a pending prompt
+    - Verified: `scripts/snooze-test.sh` 14 CLI cases (in `check-gates`), 2 golden
+      cases (active window → no notify reaches the daemon; expired window → normal
+      notify), 10 daemon unit tests (send guard, force bypass, reply/button routing,
+      pending untouched)

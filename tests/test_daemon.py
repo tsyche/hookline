@@ -437,10 +437,12 @@ class TestTypedReply(unittest.TestCase):
         self.d = daemon_mod.Daemon()
         self.handled = []
         self.sent = []   # (title, message, req_id, actions) via send_ntfy
+        self.sent_force = []
         patcher = mock.patch.object(
             self.d, "send_ntfy",
-            side_effect=lambda cfg, t, m, r, actions=None: (
-                self.sent.append((t, m, r, actions)), True)[1],
+            side_effect=lambda cfg, t, m, r, actions=None, force=False: (
+                self.sent.append((t, m, r, actions)),
+                self.sent_force.append(force), True)[2],
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -713,6 +715,144 @@ class TestWatchdogInitSystem(unittest.TestCase):
              mock.patch.object(watchdog_mod.subprocess, "run") as run:
             watchdog_mod.restart_daemon()
         run.assert_not_called()
+
+
+class TestSnoozeSend(unittest.TestCase):
+    """send_ntfy honours the mute window; force bypasses it (confirmations)."""
+
+    def setUp(self):
+        self.d = daemon_mod.Daemon()
+        daemon_mod.clear_snooze()
+        self.addCleanup(daemon_mod.clear_snooze)
+
+    def test_snoozed_window_skips_send(self):
+        daemon_mod.set_snooze(60)
+        with mock.patch.object(self.d, "_throttle") as th, \
+             mock.patch.object(daemon_mod.urllib.request, "urlopen") as up:
+            ok = self.d.send_ntfy({"HOOKLINE_TOPIC": "tp"}, "t", "m", "req1")
+        self.assertFalse(ok)
+        up.assert_not_called()     # no network attempt at all
+        th.assert_not_called()     # returns before the throttle sleep
+
+    def test_expired_window_still_sends(self):
+        with open(daemon_mod.SNOOZE_PATH, "w") as f:
+            f.write(str(int(time.time()) - 1))
+        called = {}
+
+        def fake(req, timeout=10):
+            called["y"] = True
+            raise OSError("no network")
+
+        with mock.patch.object(self.d, "_throttle"), \
+             mock.patch.object(daemon_mod.urllib.request, "urlopen", fake):
+            self.d.send_ntfy({"HOOKLINE_TOPIC": "tp"}, "t", "m", "req1")
+        self.assertTrue(called.get("y"))   # attempted, not skipped
+
+    def test_force_bypasses_snooze(self):
+        daemon_mod.set_snooze(60)
+        called = {}
+
+        def fake(req, timeout=10):
+            called["y"] = True
+
+            class R:
+                def read(self):
+                    return json.dumps({"id": "nid"}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            return R()
+
+        with mock.patch.object(self.d, "_throttle"), \
+             mock.patch.object(daemon_mod.urllib.request, "urlopen", fake):
+            ok = self.d.send_ntfy({"HOOKLINE_TOPIC": "tp"}, "t", "m", "",
+                                  force=True)
+        self.assertTrue(ok)
+        self.assertTrue(called.get("y"))
+
+
+class TestSnoozeReplies(unittest.TestCase):
+    """Typed 'snooze [minutes]' / 'unsnooze' and the response-topic button:
+    flip the mute window, never resolve a pending prompt, always confirm."""
+
+    def setUp(self):
+        self.d = daemon_mod.Daemon()
+        daemon_mod.clear_snooze()
+        self.addCleanup(daemon_mod.clear_snooze)
+        self.sent = []
+        self.sent_force = []
+        p = mock.patch.object(
+            self.d, "send_ntfy",
+            side_effect=lambda cfg, t, m, r, actions=None, force=False: (
+                self.sent.append((t, m, r, actions)),
+                self.sent_force.append(force), True)[2],
+        )
+        p.start()
+        self.addCleanup(p.stop)
+        self.d.sessions["s1"] = {"response_file": "/tmp/r"}
+        self.d.pending["r1"] = "s1"
+        self.d.question_options["r1"] = ["One", "Two"]
+
+    def read_exp(self):
+        with open(daemon_mod.SNOOZE_PATH) as f:
+            return int(f.read())
+
+    def test_snooze_defaults_to_60m_and_keeps_pending(self):
+        self.d.handle_typed_reply("snooze")
+        self.assertTrue(daemon_mod.snooze_active())
+        self.assertAlmostEqual(self.read_exp(), time.time() + 3600, delta=10)
+        self.assertIn("r1", self.d.pending)          # prompt untouched
+        self.assertEqual(self.d.question_options["r1"], ["One", "Two"])
+        title, msg, req, actions = self.sent[0]
+        self.assertIn("60m", msg)
+        self.assertIn("until", msg)
+        self.assertEqual(actions[0]["payload"], "unsnooze")
+        self.assertTrue(self.sent_force[0])
+
+    def test_snooze_parses_minutes(self):
+        self.d.handle_typed_reply("snooze 15")
+        self.assertTrue(daemon_mod.snooze_active())
+        self.assertAlmostEqual(self.read_exp(), time.time() + 900, delta=10)
+
+    def test_snooze_invalid_minutes_feedback_only(self):
+        for bad in ("snooze 0", "snooze 10081", "snooze 99999"):
+            self.d.handle_typed_reply(bad)
+            self.assertFalse(daemon_mod.snooze_active())
+        self.assertIn("1-10080", self.sent[0][1])
+        self.assertTrue(all(self.sent_force))
+        self.assertIn("r1", self.d.pending)
+
+    def test_unsnooze_reply_clears_and_confirms(self):
+        daemon_mod.set_snooze(60)
+        self.d.handle_typed_reply("unsnooze")
+        self.assertFalse(daemon_mod.snooze_active())
+        self.assertEqual(self.sent[0][1], "Notifications resumed")
+        self.assertTrue(self.sent_force[0])
+
+    def test_unsnooze_button_from_response_topic(self):
+        daemon_mod.set_snooze(60)
+        self.d.handle_response("", "unsnooze")
+        self.assertFalse(daemon_mod.snooze_active())
+        self.assertEqual(self.sent[0][1], "Notifications resumed")
+        self.assertIn("r1", self.d.pending)   # never resolves a prompt
+
+    def test_confirmation_not_blocked_by_active_window(self):
+        daemon_mod.set_snooze(60)             # window already open
+        self.d.handle_typed_reply("snooze")   # extend → confirm must go out
+        self.assertTrue(self.sent_force[0])
+        self.assertIn("60m", self.sent[0][1])
+
+    def test_typed_reply_re_snooze_forms(self):
+        self.assertTrue(daemon_mod.TYPED_REPLY_RE.match("snooze"))
+        self.assertTrue(daemon_mod.TYPED_REPLY_RE.match("snooze 15"))
+        self.assertTrue(daemon_mod.TYPED_REPLY_RE.match("unsnooze"))
+        self.assertFalse(daemon_mod.TYPED_REPLY_RE.match("snooze 15 x"))
+        self.assertFalse(daemon_mod.TYPED_REPLY_RE.match("snoozed hard"))
+        self.assertFalse(daemon_mod.TYPED_REPLY_RE.match("Notifications resumed"))
 
 
 if __name__ == "__main__":

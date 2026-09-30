@@ -69,6 +69,21 @@ finally:
   [[ "$resp" == *'"pid"'* ]]
 }
 
+# ── snooze ─────────────────────────────────────────────────────────────────────
+# Phone-notification mute window (set by `hookline snooze N` or a typed
+# "snooze" reply from the ntfy app). The file holds a future unix epoch.
+# While active, no ntfy push goes out — the terminal prompt stays and the
+# watcher keeps checking the transcript for a local answer. Shared check with
+# the daemon (which guards its own sends for retries/feedback).
+SNOOZE_FILE="${HOME}/.local/share/hookline/snooze"
+
+snooze_active() {
+  local exp
+  exp=$(cat "$SNOOZE_FILE" 2>/dev/null) || return 1
+  case "$exp" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$exp" -gt "$(date +%s)" ]
+}
+
 # Equal-share fit: shrink a rendered question body to <= budget chars without
 # dropping any numbered option line. Non-option lines (headers, blanks) are
 # capped at a third of the budget first; every option line then shares the
@@ -370,6 +385,10 @@ core_main() {
     log "background: no new transcript lines, user likely away"
 
     send_timeout_notification() {
+      if snooze_active; then
+        log "background: snooze active, suppressing prompt-expired notification"
+        return 0
+      fi
       local _topic="${HOOKLINE_TOPIC:-}"
       local _server="${HOOKLINE_NTFY_SERVER:-https://ntfy.sh}"
       [ -z "$_topic" ] && return
@@ -387,6 +406,23 @@ core_main() {
           '{topic:$topic,title:$title,message:$message,priority:2,tags:["hourglass_done"]}')" \
         "${_server}/" &>/dev/null
     }
+
+    # — Snooze: no phone traffic; keep watching for a local answer —
+    if snooze_active; then
+      log "background: snooze active, prompt stays at terminal — skipping phone notification"
+      elapsed=0
+      while [ "$elapsed" -lt "$PHONE_TIMEOUT" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        cur=$(adapter_progress_lines)
+        if [ "$cur" -gt "$INITIAL_LINES" ]; then
+          log "background: transcript grew ($INITIAL_LINES → $cur lines), user answered locally"
+          exit 0
+        fi
+      done
+      log "background: snoozed watcher exiting, prompt stays at terminal"
+      exit 0
+    fi
 
     # — Daemon path —
     if daemon_alive; then
@@ -516,6 +552,10 @@ core_main() {
 
     send_notification() {
       local req_id="$1"
+      if snooze_active; then
+        log "background: snooze became active, skipping phone notification"
+        return 1
+      fi
       THROTTLE_FILE="${HOME}/.local/share/hookline/ntfy-throttle"
       THROTTLE_INTERVAL="${HOOKLINE_NTFY_MIN_INTERVAL:-5}"
       last_req=$(cat "$THROTTLE_FILE" 2>/dev/null || echo 0)
@@ -615,8 +655,12 @@ core_main() {
           log "background: retry $retries/$MAX_RETRIES"
         fi
       else
-        log "background: notification timed out, giving up"
-        send_timeout_notification
+        if snooze_active; then
+          log "background: snoozed before notify went out, prompt stays at terminal"
+        else
+          log "background: notification timed out, giving up"
+          send_timeout_notification
+        fi
         break
       fi
     done

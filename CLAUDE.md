@@ -66,6 +66,7 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   unit tests; `scripts/doctor-test.sh` — sandboxed doctor report tests;
   `scripts/status-test.sh` — sandboxed status report tests;
   `scripts/patterns-test.sh` — sandboxed pattern-CLI tests;
+  `scripts/snooze-test.sh` — sandboxed `hookline snooze` window tests (no network);
   `scripts/install-test.sh` — sandboxed install/uninstall round-trip tests;
   `scripts/get-test.sh` — sandboxed get.sh one-line install tests (file:// tarball, no network);
   `scripts/focus-test.sh` — sandboxed bare-terminal focus-targeting tests (dry-run, no osascript);
@@ -88,6 +89,7 @@ just test-plugin    # opencode plugin unit tests (node --test, fake SDK client)
 just doctor-test    # sandboxed `hookline doctor` report tests (no network, no init system)
 just status-test    # sandboxed `hookline status` report tests (no network, no init system)
 just patterns-test  # sandboxed pattern-CLI tests (`patterns`/`remove-pattern`/`clear-patterns`)
+just snooze-test    # sandboxed `hookline snooze` window tests (fake HOME, no network)
 just hooks          # enable in-repo .githooks (pre-commit check-docs, pre-push check-gates)
 just install-test   # sandboxed install/uninstall round-trip tests (no launchd/systemd)
 just get-test       # sandboxed get.sh one-line install tests (fake HOME, no network, no init system)

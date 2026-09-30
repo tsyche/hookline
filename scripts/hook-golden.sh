@@ -55,6 +55,14 @@ CFG
     disabled)
       : > "$h/.config/hookline/disabled"
       ;;
+    snoozed)
+      # active mute window (now + 1h): the watcher must skip all phone traffic
+      echo $(( $(date +%s) + 3600 )) > "$h/.local/share/hookline/snooze"
+      ;;
+    snoozed-expired)
+      # stale window (60s in the past): notifies exactly like no snooze
+      echo $(( $(date +%s) - 60 )) > "$h/.local/share/hookline/snooze"
+      ;;
   esac
 }
 
@@ -198,14 +206,18 @@ run_case_notify_payload() {
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
 
-  [ -n "$notify" ] || ok=0
+  if [ "$filter" = "none" ]; then
+    [ -z "$notify" ] || ok=0    # snoozed: no notify may reach the daemon
+  else
+    [ -n "$notify" ] || ok=0
+  fi
   [ "$rc" -eq 0 ] || ok=0
   if [ -n "$exp_out" ]; then
     case "$out" in *"$exp_out"*) ;; *) ok=0 ;; esac
   else
     [ "$out" = "" ] || ok=0
   fi
-  if [ -n "$notify" ]; then
+  if [ "$filter" != "none" ] && [ -n "$notify" ]; then
     printf '%s' "$notify" | jq -e "$filter" >/dev/null 2>&1 || ok=0
   fi
   rm -rf "$h"
@@ -322,6 +334,16 @@ run_case_notify_payload "opencode-q3-notify-option-actions" opencode "$OPC_Q3" \
 
 run_case_notify_payload "opencode-permission-notify-default-trio" opencode "$OPC_ASK" \
   '(.no_actions | not) and (.actions | length) == 0'
+
+# ── snooze: an active mute window suppresses the phone notify entirely — the
+#    decision still lands on stdout and the watcher exits cleanly (lock is
+#    released). A stale window notifies exactly like no snooze.
+run_case_notify_payload "claude-snoozed-no-notify" claude \
+  "$(payload Bash '{"command":"rm -rf /tmp/x"}')" "none" snoozed "$ASK"
+
+run_case_notify_payload "claude-snooze-expired-notifies" claude \
+  "$(payload Bash '{"command":"rm -rf /tmp/x"}')" '.type == "notify"' \
+  snoozed-expired "$ASK"
 
 run_case_notify_payload "claude-question-notify-options" claude "$CLAUDE_Q3" \
   '.options == ["Alpha", "Beta", "Gamma"]
