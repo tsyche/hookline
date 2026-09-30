@@ -6,14 +6,8 @@ HOOK_SRC_DIR="${REPO}/hooks"
 HOOK_DST="${HOME}/.local/share/hookline/hooks/hookline.sh"
 DAEMON_SRC="${REPO}/daemon/hookline-daemon"
 DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
-PLIST_SRC="${REPO}/daemon/com.hookline.daemon.plist"
-PLIST_LABEL="com.hookline.daemon"
-PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 WATCHDOG_SRC="${REPO}/daemon/watchdog.py"
 WATCHDOG_DST="${HOME}/.local/share/hookline/watchdog.py"
-WATCHDOG_PLIST_SRC="${REPO}/daemon/com.hookline.watchdog.plist"
-WATCHDOG_PLIST_LABEL="com.hookline.watchdog"
-WATCHDOG_PLIST_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
 CONFIG_DIR="${HOME}/.config/hookline"
 CONFIG_FILE="${CONFIG_DIR}/config"
 LOG_DIR="${HOME}/.local/share/hookline"
@@ -23,13 +17,68 @@ SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 # shellcheck source=/dev/null
 source "${HOOK_SRC_DIR}/adapters/claude.sh"   # for ADAPTER_MATCHER
 
-# Fail fast off macOS before writing anything — launchd registration and
-# osascript keystroke injection are macOS-only (Linux support is tracked in
-# ROADMAP Phase 9). HOOKLINE_SANDBOX=1 keeps the Linux CI install tests green.
-if [[ "${OSTYPE:-}" != darwin* ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]]; then
-  echo "Error: hookline supports macOS only (Linux support is tracked in ROADMAP.md Phase 9)." >&2
-  echo "Nothing was installed." >&2
-  exit 1
+# Init system: launchd (macOS) or systemd --user (Linux). HOOKLINE_INIT_SYSTEM
+# overrides auto-detection so tests are deterministic on macOS and Linux CI.
+detect_init_system() {
+  case "${HOOKLINE_INIT_SYSTEM:-}" in
+    launchd|systemd|none) printf '%s' "${HOOKLINE_INIT_SYSTEM}"; return 0 ;;
+  esac
+  case "${OSTYPE:-}" in
+    darwin*) printf 'launchd' ;;
+    linux*)  if command -v systemctl >/dev/null 2>&1; then printf 'systemd'; else printf 'none'; fi ;;
+    *)       printf 'none' ;;
+  esac
+}
+INIT_SYSTEM="$(detect_init_system)"
+
+# Fail fast on an unsupported platform before writing anything — without
+# launchd or systemd there is nowhere to register the daemon, and keystroke
+# injection needs macOS osascript. HOOKLINE_SANDBOX=1 falls back to the
+# launchd layout (registration is skipped in sandbox mode anyway).
+if [[ "$INIT_SYSTEM" == "none" ]]; then
+  if [[ "${HOOKLINE_SANDBOX:-0}" == "1" ]]; then
+    INIT_SYSTEM="launchd"
+  else
+    echo "Error: hookline supports macOS or Linux with systemd." >&2
+    echo "Nothing was installed." >&2
+    exit 1
+  fi
+fi
+
+# Job files: a plist pair under ~/Library/LaunchAgents on launchd, unit files
+# under ~/.config/systemd/user on systemd.
+if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+  JOB_DIR="${HOME}/.config/systemd/user"
+  DAEMON_JOB_SRC="${REPO}/daemon/hookline-daemon.service"
+  DAEMON_JOB_DST="${JOB_DIR}/hookline-daemon.service"
+  DAEMON_JOB_LABEL="hookline-daemon.service"
+  WATCHDOG_JOB_SRC="${REPO}/daemon/hookline-watchdog.service"
+  WATCHDOG_JOB_DST="${JOB_DIR}/hookline-watchdog.service"
+  TIMER_JOB_SRC="${REPO}/daemon/hookline-watchdog.timer"
+  TIMER_JOB_DST="${JOB_DIR}/hookline-watchdog.timer"
+  TIMER_JOB_LABEL="hookline-watchdog.timer"
+else
+  JOB_DIR="${HOME}/Library/LaunchAgents"
+  DAEMON_JOB_SRC="${REPO}/daemon/com.hookline.daemon.plist"
+  DAEMON_JOB_DST="${JOB_DIR}/com.hookline.daemon.plist"
+  DAEMON_JOB_LABEL="com.hookline.daemon"
+  WATCHDOG_JOB_SRC="${REPO}/daemon/com.hookline.watchdog.plist"
+  WATCHDOG_JOB_DST="${JOB_DIR}/com.hookline.watchdog.plist"
+  TIMER_JOB_SRC=""
+  TIMER_JOB_DST=""
+  TIMER_JOB_LABEL=""
+fi
+
+# systemd: probe the user instance before writing anything — a missing
+# linger / user bus is the top fresh-Linux failure, and install would
+# otherwise die halfway through registration.
+if [[ "$INIT_SYSTEM" == "systemd" ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]]; then
+  if ! systemctl --user daemon-reload >/dev/null 2>&1; then
+    echo "Error: systemd --user is not reachable for $(id -un)." >&2
+    echo "Run: loginctl enable-linger $(id -un)  (then log out and back in) and retry." >&2
+    echo "Nothing was installed." >&2
+    exit 1
+  fi
 fi
 
 echo "=== hookline installer ==="
@@ -49,8 +98,7 @@ fi
 command -v python3 &>/dev/null || { echo "Error: python3 is required but not installed."; exit 1; }
 
 # Create directories
-mkdir -p "$(dirname "$HOOK_DST")" "$(dirname "$DAEMON_DST")" "$CONFIG_DIR" "$LOG_DIR" \
-         "${HOME}/Library/LaunchAgents"
+mkdir -p "$(dirname "$HOOK_DST")" "$(dirname "$DAEMON_DST")" "$CONFIG_DIR" "$LOG_DIR" "$JOB_DIR"
 
 # Configure topic
 if [ -f "$CONFIG_FILE" ]; then
@@ -111,14 +159,21 @@ if [ -d "${HOME}/.config/opencode" ]; then
 fi
 
 # Install CLI. Fall back to ~/.local/bin when /usr/local/bin isn't writable —
-# the launchd plist execs this path, so a silent copy failure means the daemon
-# exits 78 in a KeepAlive loop while install still reports success.
+# the daemon job (plist/unit) execs this path, so a silent copy failure means
+# the daemon exits 78 in a KeepAlive loop while install still reports success.
+# HOOKLINE_CLI_DIR overrides the destination (tests use it to exercise
+# non-sandbox registration without touching the real /usr/local/bin);
 # HOOKLINE_SANDBOX=1 (scripts/install-test.sh) forces the home-local path so
 # test runs never touch /usr/local/bin.
 CLI_SRC="${REPO}/hookline"
 CLI_DST="/usr/local/bin/hookline"
 if [ -f "$CLI_SRC" ]; then
-  if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
+  if [ -n "${HOOKLINE_CLI_DIR:-}" ]; then
+    CLI_DST="$HOOKLINE_CLI_DIR"
+    mkdir -p "$(dirname "$CLI_DST")"
+    cp "$CLI_SRC" "$CLI_DST" && chmod +x "$CLI_DST"
+    echo "CLI installed to $CLI_DST (HOOKLINE_CLI_DIR)"
+  elif [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
     CLI_DST="${HOME}/.local/bin/hookline"
     mkdir -p "$(dirname "$CLI_DST")"
     cp "$CLI_SRC" "$CLI_DST" && chmod +x "$CLI_DST"
@@ -144,30 +199,42 @@ if [ -f "${REPO}/VERSION" ]; then
   cp "${REPO}/VERSION" "${LOG_DIR}/VERSION"
 fi
 
-# Install and register launchd plist
+# Install and register the daemon job (launchd plist / systemd unit)
 sed -e "s|HOOKLINE_DAEMON_PATH|$CLI_DST|g" \
     -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
-    "$PLIST_SRC" > "$PLIST_DST"
+    "$DAEMON_JOB_SRC" > "$DAEMON_JOB_DST"
 if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
-  echo "Daemon plist written to $PLIST_DST (launchd registration skipped — HOOKLINE_SANDBOX=1)"
+  echo "Daemon job written to $DAEMON_JOB_DST ($INIT_SYSTEM registration skipped — HOOKLINE_SANDBOX=1)"
+elif [ "$INIT_SYSTEM" = "systemd" ]; then
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$DAEMON_JOB_LABEL"
+  echo "Daemon registered with systemd and started"
 else
-  launchctl unload "$PLIST_DST" 2>/dev/null || true
-  launchctl load "$PLIST_DST"
+  launchctl unload "$DAEMON_JOB_DST" 2>/dev/null || true
+  launchctl load "$DAEMON_JOB_DST"
   echo "Daemon registered with launchd and started"
 fi
 
-# Install the heartbeat watchdog — a StartInterval job that restarts a hung
-# daemon (KeepAlive only catches processes that actually exit).
+# Install the heartbeat watchdog — a StartInterval job (launchd) / 60s timer
+# (systemd) that restarts a hung daemon (KeepAlive only catches processes that
+# actually exit).
 cp "$WATCHDOG_SRC" "$WATCHDOG_DST"
 chmod +x "$WATCHDOG_DST"
 sed -e "s|HOOKLINE_WATCHDOG_PATH|$WATCHDOG_DST|g" \
     -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" \
-    "$WATCHDOG_PLIST_SRC" > "$WATCHDOG_PLIST_DST"
+    "$WATCHDOG_JOB_SRC" > "$WATCHDOG_JOB_DST"
+if [ "$INIT_SYSTEM" = "systemd" ]; then
+  sed -e "s|HOOKLINE_LOG_DIR|$LOG_DIR|g" "$TIMER_JOB_SRC" > "$TIMER_JOB_DST"
+fi
 if [ "${HOOKLINE_SANDBOX:-0}" = "1" ]; then
-  echo "Watchdog plist written to $WATCHDOG_PLIST_DST (launchd registration skipped — HOOKLINE_SANDBOX=1)"
+  echo "Watchdog job written to $WATCHDOG_JOB_DST ($INIT_SYSTEM registration skipped — HOOKLINE_SANDBOX=1)"
+elif [ "$INIT_SYSTEM" = "systemd" ]; then
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$TIMER_JOB_LABEL"
+  echo "Heartbeat watchdog registered with systemd"
 else
-  launchctl unload "$WATCHDOG_PLIST_DST" 2>/dev/null || true
-  launchctl load "$WATCHDOG_PLIST_DST"
+  launchctl unload "$WATCHDOG_JOB_DST" 2>/dev/null || true
+  launchctl load "$WATCHDOG_JOB_DST"
   echo "Heartbeat watchdog registered with launchd"
 fi
 
@@ -247,6 +314,15 @@ if [ -d "$CODEX_DIR" ]; then
     echo "Hook registered in $CODEX_HOOKS (provider: codex)"
     echo "Review it once inside codex (/hooks) — codex skips untrusted hooks until then."
   fi
+fi
+
+# systemd: without linger the user manager (and the daemon with it) stops at
+# logout — flag it, never fail the install over it.
+if [[ "$INIT_SYSTEM" == "systemd" ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]] \
+   && command -v loginctl >/dev/null 2>&1 \
+   && [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || true)" != "yes" ]; then
+  echo "Note: user services stop at logout — enable linger to keep hookline alive:"
+  echo "  loginctl enable-linger $(id -un)"
 fi
 
 echo

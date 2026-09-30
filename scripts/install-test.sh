@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Sandboxed checks for install.sh / uninstall.sh — fake HOME, no network, no
-# launchd.
+# real init system (launchd or systemd).
 #
 # HOOKLINE_SANDBOX=1 keeps both scripts off global paths (/usr/local/bin) and
-# away from launchctl. Asserts the install/uninstall registration pairs invert
-# exactly (settings JSON byte-identical after round trip, other hooks
-# untouched), the plugin file appears/disappears, plists are written and
-# removed, the topic survives reinstall, and config/log removal is opt-in.
+# away from launchctl/systemctl. Every run pins HOOKLINE_INIT_SYSTEM so the
+# suite is deterministic on macOS and Linux CI alike. Asserts the
+# install/uninstall registration pairs invert exactly (settings JSON
+# byte-identical after round trip, other hooks untouched), the plugin file
+# appears/disappears, the platform's job files (plist / systemd units) are
+# written and removed, the topic survives reinstall, and config/log removal is
+# opt-in.
 #
 # Usage: bash scripts/install-test.sh
 set -u
@@ -132,11 +135,11 @@ codex_foreign_count() { # <hooks.json> -> foreign SessionStart hooks that must s
 }
 
 run_install() {
-  env HOME="$H" HOOKLINE_SANDBOX=1 bash "$REPO/install.sh" 2>&1
+  env HOME="$H" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=launchd bash "$REPO/install.sh" 2>&1
 }
 
 run_uninstall() { # run_uninstall <y|n>
-  printf '%s\n' "$1" | env HOME="$H" HOOKLINE_SANDBOX=1 bash "$REPO/uninstall.sh" 2>&1
+  printf '%s\n' "$1" | env HOME="$H" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=launchd bash "$REPO/uninstall.sh" 2>&1
 }
 
 # ── 1. fresh install: files land, registration added, launchd skipped ──
@@ -205,25 +208,130 @@ not_exists "config-removed-on-y" "$CONFIG"
 not_exists "config-dir-removed-on-y" "$H/.config/hookline"
 not_exists "share-dir-removed-on-y" "$H/.local/share/hookline"
 
-# ── 6. non-macOS without sandbox → fail fast before any write ──
-# Separate fake HOME (leaves the round-trip state alone); OSTYPE override
-# forces the Linux branch on this mac. launchctl is stubbed so a regression
-# in the guard can't touch real launchd — and the stub would surface it.
+# ── 6. unsupported platform without sandbox → fail fast before any write ──
+# Separate fake HOME (leaves the round-trip state alone). HOOKLINE_INIT_SYSTEM
+# pins "none" on every host (macOS and Linux CI each have their own init
+# system, so OSTYPE alone is not enough), and launchctl/systemctl are stubbed
+# so a regression in the guard can't touch the real init system.
 lh="$sandbox/linux-home"
 mkdir -p "$lh/.claude" "$lh/.config" "$lh/Library/LaunchAgents" \
          "$lh/.local/share/hookline" "$sandbox/stub-bin"
 printf '#!/bin/bash\necho "launchctl CALLED" >&2\nexit 0\n' > "$sandbox/stub-bin/launchctl"
-chmod +x "$sandbox/stub-bin/launchctl"
+printf '#!/bin/bash\necho "systemctl CALLED" >&2\nexit 0\n' > "$sandbox/stub-bin/systemctl"
+chmod +x "$sandbox/stub-bin/launchctl" "$sandbox/stub-bin/systemctl"
 out="$(env HOME="$lh" OSTYPE=linux-gnu PATH="$sandbox/stub-bin:$PATH" HOOKLINE_SANDBOX=0 \
-       bash "$REPO/install.sh" 2>&1)"
+       HOOKLINE_INIT_SYSTEM=none bash "$REPO/install.sh" 2>&1)"
 rc=$?
 if [ "$rc" -ne 0 ]; then echo "PASS linux-guard-rc rc=$rc"; PASS=$((PASS + 1))
 else echo "FAIL linux-guard-rc rc=0"; FAIL=$((FAIL + 1)); fi
-contains "linux-guard-message" "$out" "supports macOS only"
+contains "linux-guard-message" "$out" "supports macOS or Linux with systemd"
 absent "linux-guard-launchctl-stub" "$out" "launchctl CALLED"
+absent "linux-guard-systemctl-stub" "$out" "systemctl CALLED"
 not_exists "linux-guard-no-config" "$lh/.config/hookline/config"
 not_exists "linux-guard-no-plist" "$lh/Library/LaunchAgents/com.hookline.daemon.plist"
 not_exists "linux-guard-no-hook" "$lh/.local/share/hookline/hooks/hookline.sh"
+
+# ── 6b. unknown OSTYPE, no override → auto-detect falls through to none ──
+# freebsd13 is never darwin/linux, so this exercises the detection fallback
+# itself (not just the HOOKLINE_INIT_SYSTEM override path above).
+fh="$sandbox/bsd-home"
+mkdir -p "$fh/.claude" "$fh/.config"
+out="$(env HOME="$fh" OSTYPE=freebsd13 HOOKLINE_INIT_SYSTEM= PATH="$sandbox/stub-bin:$PATH" \
+       HOOKLINE_SANDBOX=0 bash "$REPO/install.sh" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then echo "PASS bsd-guard-rc rc=$rc"; PASS=$((PASS + 1))
+else echo "FAIL bsd-guard-rc rc=0"; FAIL=$((FAIL + 1)); fi
+contains "bsd-guard-message" "$out" "supports macOS or Linux with systemd"
+not_exists "bsd-guard-no-config" "$fh/.config/hookline/config"
+
+# ── 7. systemd (sandbox): unit files land, no plist, no systemctl call ──
+sh="$sandbox/systemd-home"
+mkdir -p "$sh/.claude" "$sh/.config/opencode" "$sh/.config/hookline" "$sh/.codex"
+printf '%s\n' 'HOOKLINE_TOPIC="install-test-topic"' > "$sh/.config/hookline/config"
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/x/other-hook"}]}]}}' \
+  > "$sh/.claude/settings.json"
+out="$(env HOME="$sh" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=systemd PATH="$sandbox/stub-bin:$PATH" \
+       bash "$REPO/install.sh" 2>&1)"
+rc=$?
+expect_rc "systemd-sandbox-install" "$rc"
+contains "systemd-skips-registration" "$out" "systemd registration skipped"
+absent "systemd-no-systemctl-call" "$out" "systemctl CALLED"
+exists "systemd-daemon-unit-written" "$sh/.config/systemd/user/hookline-daemon.service"
+exists "systemd-watchdog-unit-written" "$sh/.config/systemd/user/hookline-watchdog.service"
+exists "systemd-watchdog-timer-written" "$sh/.config/systemd/user/hookline-watchdog.timer"
+exists "systemd-watchdog-py-written" "$sh/.local/share/hookline/watchdog.py"
+exists "systemd-cli-installed" "$sh/.local/bin/hookline"
+not_exists "systemd-no-plist-dir" "$sh/Library/LaunchAgents"
+contains "unit-resolves-cli-path" "$(cat "$sh/.config/systemd/user/hookline-daemon.service")" "$sh/.local/bin/hookline"
+absent "unit-no-placeholder" "$(cat "$sh/.config/systemd/user/hookline-daemon.service")" "HOOKLINE_DAEMON_PATH"
+absent "timer-no-placeholder" "$(cat "$sh/.config/systemd/user/hookline-watchdog.timer")" "HOOKLINE_LOG_DIR"
+contains "systemd-settings-registered" \
+  "$(jq '[.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$sh/.claude/settings.json")" "1"
+out="$(printf 'n\n' | env HOME="$sh" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=systemd \
+       PATH="$sandbox/stub-bin:$PATH" bash "$REPO/uninstall.sh" 2>&1)"
+rc=$?
+expect_rc "systemd-sandbox-uninstall" "$rc"
+absent "systemd-uninstall-no-systemctl" "$out" "systemctl CALLED"
+not_exists "systemd-daemon-unit-removed" "$sh/.config/systemd/user/hookline-daemon.service"
+not_exists "systemd-watchdog-service-removed" "$sh/.config/systemd/user/hookline-watchdog.service"
+not_exists "systemd-watchdog-timer-removed" "$sh/.config/systemd/user/hookline-watchdog.timer"
+not_exists "systemd-cli-removed" "$sh/.local/bin/hookline"
+not_exists "systemd-hooks-removed" "$sh/.local/share/hookline/hooks"
+exists "systemd-config-kept-on-n" "$sh/.config/hookline/config"
+
+# ── 8. systemd (non-sandbox): registration drives the user bus via stubs ──
+# HOOKLINE_CLI_DIR points the CLI install at a sandbox path so a non-sandbox
+# run never touches the real /usr/local/bin; systemctl/loginctl are stubbed
+# first in PATH and log their argv for assertion.
+ch="$sandbox/systemd-live-home"
+cli="$sandbox/cli8/bin/hookline"
+log="$sandbox/systemd8.log"
+mkdir -p "$ch/.claude" "$ch/.config/opencode" "$ch/.config/hookline" "$ch/.codex" "$sandbox/stub-bin8"
+printf '%s\n' 'HOOKLINE_TOPIC="install-test-topic"' > "$ch/.config/hookline/config"
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/x/other-hook"}]}]}}' \
+  > "$ch/.claude/settings.json"
+cat > "$sandbox/stub-bin8/systemctl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> "$log"
+exit 0
+EOF
+cat > "$sandbox/stub-bin8/loginctl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> "$log"
+echo "no"
+exit 0
+EOF
+chmod +x "$sandbox/stub-bin8/systemctl" "$sandbox/stub-bin8/loginctl"
+out="$(env HOME="$ch" HOOKLINE_SANDBOX=0 HOOKLINE_INIT_SYSTEM=systemd \
+       HOOKLINE_CLI_DIR="$cli" PATH="$sandbox/stub-bin8:$PATH" \
+       bash "$REPO/install.sh" 2>&1)"
+rc=$?
+expect_rc "systemd-live-install" "$rc"
+exists "systemd-live-daemon-unit" "$ch/.config/systemd/user/hookline-daemon.service"
+exists "systemd-live-timer" "$ch/.config/systemd/user/hookline-watchdog.timer"
+exists "systemd-live-cli-at-cli-dir" "$cli"
+contains "systemd-live-cli-msg" "$out" "CLI installed to $cli"
+contains "unit-execstart-cli-dir" "$(cat "$ch/.config/systemd/user/hookline-daemon.service")" "$cli"
+contains "live-daemon-reload" "$(cat "$log")" "--user daemon-reload"
+contains "live-daemon-enable" "$(cat "$log")" "--user enable --now hookline-daemon.service"
+contains "live-timer-enable" "$(cat "$log")" "--user enable --now hookline-watchdog.timer"
+contains "live-registered-claim" "$out" "Daemon registered with systemd"
+contains "live-linger-note" "$out" "loginctl enable-linger"
+contains "live-linger-probe" "$(cat "$log")" "show-user"
+contains "live-settings-registered" \
+  "$(jq '[.hooks.PreToolUse[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$ch/.claude/settings.json")" "1"
+
+out="$(printf 'n\n' | env HOME="$ch" HOOKLINE_SANDBOX=0 HOOKLINE_INIT_SYSTEM=systemd \
+       HOOKLINE_CLI_DIR="$cli" PATH="$sandbox/stub-bin8:$PATH" \
+       bash "$REPO/uninstall.sh" 2>&1)"
+rc=$?
+expect_rc "systemd-live-uninstall" "$rc"
+not_exists "systemd-live-unit-removed" "$ch/.config/systemd/user/hookline-daemon.service"
+not_exists "systemd-live-timer-removed" "$ch/.config/systemd/user/hookline-watchdog.timer"
+not_exists "systemd-live-cli-removed" "$cli"
+contains "live-daemon-disable" "$(cat "$log")" "--user disable --now hookline-daemon.service"
+contains "live-timer-disable" "$(cat "$log")" "--user disable --now hookline-watchdog.timer"
+contains "live-daemon-reload-after-uninstall" "$(cat "$log")" "--user daemon-reload"
 
 echo
 echo "install-test: $PASS passed, $FAIL failed"

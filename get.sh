@@ -9,18 +9,28 @@
 #   HOOKLINE_LATEST_RELEASE_URL  latest-release JSON endpoint override (tests)
 #   HOOKLINE_TARBALL_BASE       tarball URL prefix override (tests)
 #   HOOKLINE_SANDBOX=1          non-interactive install (no topic prompt)
+#   HOOKLINE_INIT_SYSTEM        launchd|systemd|none override (tests; passes through to install.sh)
 set -euo pipefail
 
 REPO_SLUG="tsyche/hookline"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Fail fast off macOS before any network or filesystem work — launchd
-# registration and osascript keystroke injection are macOS-only (Linux
-# support is tracked in ROADMAP Phase 9). HOOKLINE_SANDBOX=1 keeps the
-# Linux CI install tests running.
-if [[ "${OSTYPE:-}" != darwin* ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]]; then
-  echo "Error: hookline supports macOS only (Linux support is tracked in ROADMAP.md Phase 9)." >&2
+# Fail fast on an unsupported platform before any network or filesystem work —
+# install.sh needs launchd (macOS) or systemd --user (Linux); HOOKLINE_SANDBOX=1
+# keeps sandboxed tests running on either platform.
+detect_init_system() {
+  case "${HOOKLINE_INIT_SYSTEM:-}" in
+    launchd|systemd|none) printf '%s' "${HOOKLINE_INIT_SYSTEM}"; return 0 ;;
+  esac
+  case "${OSTYPE:-}" in
+    darwin*) printf 'launchd' ;;
+    linux*)  if command -v systemctl >/dev/null 2>&1; then printf 'systemd'; else printf 'none'; fi ;;
+    *)       printf 'none' ;;
+  esac
+}
+if [[ "$(detect_init_system)" == "none" ]] && [[ "${HOOKLINE_SANDBOX:-0}" != "1" ]]; then
+  echo "Error: hookline supports macOS or Linux with systemd." >&2
   echo "Nothing was installed." >&2
   exit 1
 fi

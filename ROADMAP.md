@@ -6,7 +6,8 @@
 > the source of truth, and the release workflow tags and publishes on the first main push
 > that carries a `VERSION` change. Sections below are **phases** (the same scheme as
 > Phases 0–4, house convention across projects), ordered next-up first: Phase 6
-> onboarding → Phase 8 multi-session → Phase 9 Linux (scoped) → Phase 7 remote
+> onboarding → Phase 8 multi-session → Phase 9 Linux Tier 2 (Tier 1 systemd shipped,
+> acceptance pending) → Phase 7 remote
 > control + E2E (Phases 0–5 shipped).
 
 > **Status: multi-provider revival (2026-09-25).** hookline was paused in maintenance mode
@@ -43,11 +44,11 @@
 > `.githooks/` + `just hooks`.
 > **v1.7.1 tagged 2026-09-29** — GNU/BSD `stat` fix (patterns mode restore on Linux
 > coreutils) + doc hygiene. **Unreleased on main:** version check, one-line install,
-> non-macOS install fail-fast guard.
+> bare-terminal multi-session targeting, Linux Tier 1 (systemd install/daemon/watchdog).
 
 ## Goals
 
-hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account (Linux support is scoped in Phase 9; installs elsewhere fail fast with a clear message). Every feature beyond that is an opt-in upgrade — not a requirement.
+hookline should be installable and usable by anyone in under 5 minutes with nothing but a Mac, a phone, and an ntfy account (Linux Tier 1 landed — systemd installs work; installs elsewhere fail fast with a clear message). Every feature beyond that is an opt-in upgrade — not a requirement.
 
 **Notification transport tiers (all first-class, user's choice):**
 - **ntfy.sh public** — zero friction, works immediately, free; rate limits only a concern for very heavy use
@@ -65,8 +66,9 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 > Previous recommended 3 (pattern CLI, CONTRIBUTING.md, in-repo git hooks) all shipped
 > 2026-09-29 in **v1.7.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
-> Version check, one-line install, and bare-terminal multi-session targeting shipped
-> 2026-09-29 (unreleased — in `[Unreleased]`).
+> Version check, one-line install, bare-terminal multi-session targeting, and Linux Tier 1
+> (systemd) shipped 2026-09-29 (unreleased — in `[Unreleased]`; Tier 1 acceptance run on
+> a fresh Ubuntu box still pending).
 > grok adapter (Phase 6) awaits a go decision; Phase 7 remote control + E2E need
 > on-device human steps.
 
@@ -184,19 +186,25 @@ Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0�
 - **Direct mode via Tailscale / VPN** — zero relay dependency; the endpoint design (port `7676`, `/pending`, `/respond`) and mobile interface options (PWA, Shortcut, companion app) are specced in [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)
 - **hookline relay (self-hostable)** — minimal relay server (single binary or Docker image) as a fully independent ntfy replacement
 - **Linux support** — tiered, so tmux users get value first:
-  - **Tier 1 — daemon + tmux path (~4–6h):** `systemd --user` units replace the launchd
-    plists (daemon + watchdog `StartInterval`); `install.sh`/`uninstall.sh`/`hookline
-    doctor|status|daemon` branch on platform (`systemctl --user` vs `launchctl`); the
-    non-macOS fail-fast guard flips to allow Linux with systemd present; bare-terminal
-    injection (osascript) stays macOS-only — the tmux `send-keys` path is already
-    portable. Watch-outs: `loginctl enable-linger` for SSH/headless sessions,
-    `~/.config/systemd/user/` unit files, watchdog checks `systemctl --user is-active`
+  - **Tier 1 — daemon + tmux path: SHIPPED (unreleased; fresh-Ubuntu acceptance run
+    still pending)** — `systemd --user` units replace the launchd plists (daemon +
+    watchdog `StartInterval` → 60s `hookline-watchdog.timer`); `install.sh` /
+    `uninstall.sh` / `hookline doctor|status|daemon` / the watchdog branch on the
+    detected init system (`systemctl --user` vs `launchctl`; `HOOKLINE_INIT_SYSTEM`
+    env override pins it for tests on either OS); the fail-fast guard now allows
+    Linux with systemd and still fails fast elsewhere; bare-terminal injection
+    (osascript) stays macOS-only — the tmux `send-keys` path is already portable.
+    Watch-outs handled: user-bus probe before any write + linger note
+    (`loginctl enable-linger`), `~/.config/systemd/user/` unit files, watchdog
+    checks `systemctl --user is-enabled` (enabled-but-dead → restart, deliberately
+    disabled → stand down)
   - **Tier 2 — bare terminals (~4–6h):** replace frontmost-app `osascript` keystroke
     injection with `xdotool` (X11) / `ydotool` (Wayland, needs uinput + rootless udev);
     terminal detection covers kitty/alacritty/foot/gnome-terminal; focus-dependent,
     same limitation as macOS bare terminals (tmux remains the focus-independent path)
   - Acceptance: fresh Ubuntu/Debian box — one-line install registers systemd units,
     daemon runs, phone notification + Allow/Deny round-trip works in a tmux session
+    (**not yet run** — Tier 1 landed in code/tests only)
   - Not in scope: Windows/WSL (separate spike if ever)
 - **Notification content control** — configurable truncation; redact sensitive path segments
 - **Approval history** — queryable log of what was approved/denied, when, and from where (terminal vs. phone)

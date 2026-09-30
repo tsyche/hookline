@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/tsyche/hookline/actions/workflows/ci.yml/badge.svg)](https://github.com/tsyche/hookline/actions/workflows/ci.yml)
 
-**tl;dr:** Approve permission prompts from your phone via [ntfy.sh](https://ntfy.sh) — works with Claude Code, Codex, OpenCode, and any hook-compatible AI coding agent on macOS. A 20-second grace period keeps your phone quiet when you're at the terminal.
+**tl;dr:** Approve permission prompts from your phone via [ntfy.sh](https://ntfy.sh) — works with Claude Code, Codex, OpenCode, and any hook-compatible AI coding agent on macOS or Linux (systemd). A 20-second grace period keeps your phone quiet when you're at the terminal.
 
 When an agent needs permission to run a tool, the terminal prompt appears instantly. If you answer at the terminal, your phone is never notified. If you walk away, a push notification arrives on your phone after the grace period — tap to respond, and the prompt auto-dismisses.
 
@@ -22,7 +22,8 @@ Each provider plugs into a provider-neutral core through an adapter: Claude Code
 
 ## Requirements
 
-- macOS (Terminal.app, iTerm2, WezTerm, or tmux — see [terminal support](#terminal-support))
+- macOS, or Linux with systemd (the daemon and watchdog run as systemd user units; a 60s user timer stands in for launchd's `StartInterval` watchdog)
+- A terminal hookline can inject into: tmux (macOS and Linux) or iTerm2 / Terminal.app / WezTerm (macOS only — see [terminal support](#terminal-support))
 - `bash`, `jq`, `curl`, `python3`
 - `just` (optional — `bash install.sh` works without it)
 - [ntfy app](https://ntfy.sh) on your phone (iOS / Android)
@@ -58,8 +59,12 @@ The installer will:
 3. Write config to `~/.config/hookline/config`
 4. Install the hook to `~/.local/share/hookline/hooks/hookline.sh`
 5. Install the daemon to `~/.local/share/hookline/daemon/hookline-daemon`
-6. Register the daemon and the heartbeat watchdog with launchd (the watchdog
-   restarts a hung daemon — `KeepAlive` only catches processes that exit)
+6. Register the daemon and the heartbeat watchdog with launchd (macOS) or
+   systemd user units (`~/.config/systemd/user/` on Linux — the watchdog
+   restarts a hung daemon; `KeepAlive`/`Restart` only catches processes that
+   exit). On Linux the installer probes the user bus first (if it's
+   unreachable: `loginctl enable-linger $USER`, log out and back in) and
+   reminds you to enable linger so services survive logout
 7. Register the hook in `~/.claude/settings.json` (plus a second Claude-profile settings file when one is present on the machine)
 8. Install the OpenCode plugin to `~/.config/opencode/plugins/hookline.js`, when `~/.config/opencode` exists
 9. Merge the Codex `PermissionRequest` hook into `~/.codex/hooks.json`, when `~/.codex` exists (existing hooks in the file are preserved; review the new hook once inside codex via `/hooks` — codex skips untrusted hooks)
@@ -190,8 +195,8 @@ hookline clear-patterns       # wipe the project allowlist (`--global` for globa
 
 If phone notifications stop arriving, run `hookline doctor` — it checks the
 interpreter, config, hook registration, daemon liveness (real socket ping plus
-heartbeat ages), launchd jobs, and ntfy reachability, and restarts a dead or
-hung daemon automatically.
+heartbeat ages), the launchd jobs / systemd units, and ntfy reachability, and
+restarts a dead or hung daemon automatically.
 
 ## Test
 
@@ -233,8 +238,8 @@ bash uninstall.sh
 ```
 
 Removes the hook from Claude settings, the Codex `PermissionRequest` entry, the
-OpenCode plugin, the daemon and watchdog launchd jobs, the CLI, and installed
-files. Optionally removes config and logs.
+OpenCode plugin, the daemon and watchdog jobs (launchd plists / systemd units),
+the CLI, and installed files. Optionally removes config and logs.
 
 ## Terminal support
 
@@ -249,6 +254,8 @@ files. Optionally removes config and logs.
 | Codex TUI | `tmux send-keys` (own pane) / AppleScript | `PermissionRequest` declines → codex's own approval menu shows; phone answer injects Enter (approve) / Esc (cancel) into the pane that owns the prompt |
 
 When the phone answers a prompt in a bare terminal, hookline first focuses the exact session that asked (iTerm2 by session id, WezTerm by pane id) so keystrokes never land in a neighboring window; Terminal.app and unknown terminals keep the previous frontmost behavior. tmux needs none of this — `send-keys` targets the pane directly.
+
+On Linux, tmux `send-keys` is the injection path that works today; bare-terminal keystroke injection (`xdotool`/`ydotool`) is planned (ROADMAP Phase 9 Tier 2).
 
 For the AppleScript terminals, keystroke injection is performed by the hook process (a child of your terminal), so macOS Accessibility permission is only needed for the terminal app itself — never for a background process. tmux injection uses `tmux send-keys` (run by the daemon) and needs no Accessibility permission at all.
 

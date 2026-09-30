@@ -50,10 +50,11 @@ new_home() { # new_home -> echoes path
 }
 
 # run_get <home> <extra-env ...> — stdin at /dev/null (no prompt), captures
-# combined output in $out and rc in $rc.
+# combined output in $out and rc in $rc. Pins HOOKLINE_INIT_SYSTEM=launchd for
+# determinism on macOS and Linux CI (later args in "$@" override it).
 run_get() {
   local home="$1"; shift
-  out=$(env HOME="$home" HOOKLINE_SANDBOX=1 \
+  out=$(env HOME="$home" HOOKLINE_SANDBOX=1 HOOKLINE_INIT_SYSTEM=launchd \
       HOOKLINE_TARBALL_BASE="file://${arc}/dist" \
       HOOKLINE_LATEST_RELEASE_URL="file://${arc}/dist/latest.json" \
       "$@" bash "$GET" </dev/null 2>&1)
@@ -121,15 +122,30 @@ case "$out" in *"could not determine the latest release"*) ;; *) ok=1 ;; esac
 [ -f "$h/.config/hookline/config" ] && ok=1
 check "latest-unresolvable-error" "$ok"
 
-# ── 6. non-macOS without sandbox → fail fast before any work ──
+# ── 6. unsupported platform without sandbox → fail fast before any work ──
+# HOOKLINE_INIT_SYSTEM pins "none" on every host (macOS and Linux CI each
+# have their own init system, so OSTYPE alone is not enough).
 h=$(new_home)
-out=$(env HOME="$h" OSTYPE=linux-gnu HOOKLINE_TARBALL_BASE="file://${arc}/dist" \
+out=$(env HOME="$h" OSTYPE=linux-gnu HOOKLINE_INIT_SYSTEM=none \
+    HOOKLINE_TARBALL_BASE="file://${arc}/dist" \
     bash "$GET" </dev/null 2>&1); rc=$?
 ok=0
 [ "$rc" -ne 0 ] || ok=1
-case "$out" in *"supports macOS only"*) ;; *) ok=1 ;; esac
+case "$out" in *"supports macOS or Linux with systemd"*) ;; *) ok=1 ;; esac
 [ -f "$h/.local/share/hookline/hooks/hookline.sh" ] && ok=1
 check "linux-fail-fast" "$ok"
+
+# ── 7. systemd (sandbox): bootstrap installs the unit layout ──
+h=$(new_home)
+run_get "$h" HOOKLINE_INIT_SYSTEM=systemd
+ok=0
+[ "$rc" -eq 0 ] || ok=1
+[ -f "$h/.config/systemd/user/hookline-daemon.service" ] || ok=1
+[ -f "$h/.config/systemd/user/hookline-watchdog.service" ] || ok=1
+[ -f "$h/.config/systemd/user/hookline-watchdog.timer" ] || ok=1
+[ -f "$h/Library/LaunchAgents/com.hookline.daemon.plist" ] && ok=1
+grep -q "hookline" "$h/.claude/settings.json" || ok=1
+check "systemd-install" "$ok"
 
 echo
 echo "get-test: $PASS passed, $FAIL failed"

@@ -1,0 +1,18 @@
+[Unit]
+Description=hookline notification daemon
+# Mirror launchd KeepAlive: never give up on a non-zero exit (exit 78 when the
+# CLI path is missing would otherwise hit the start limit and stop retrying).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart="HOOKLINE_DAEMON_PATH" daemon _run
+Restart=always
+RestartSec=2
+# systemd >= 236 (Ubuntu 18.04+); mirrors launchd's StandardOut/StandardError
+# paths so `just logs` sees the same files on both platforms.
+StandardOutput=append:HOOKLINE_LOG_DIR/daemon.log
+StandardError=append:HOOKLINE_LOG_DIR/daemon.log
+
+[Install]
+WantedBy=default.target

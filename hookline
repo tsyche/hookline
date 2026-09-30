@@ -8,9 +8,36 @@ DAEMON_DST="${HOME}/.local/share/hookline/daemon/hookline-daemon"
 DAEMON_SOCK="${HOME}/.local/share/hookline/daemon.sock"
 DAEMON_PID="${HOME}/.local/share/hookline/daemon.pid"
 PLIST_LABEL="com.hookline.daemon"
-PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 WATCHDOG_PLIST_LABEL="com.hookline.watchdog"
-WATCHDOG_PLIST_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
+
+# Init system: launchd (macOS) or systemd --user (Linux). HOOKLINE_INIT_SYSTEM
+# overrides auto-detection so tests are deterministic on either platform.
+detect_init_system() {
+  case "${HOOKLINE_INIT_SYSTEM:-}" in
+    launchd|systemd|none) printf '%s' "${HOOKLINE_INIT_SYSTEM}"; return 0 ;;
+  esac
+  case "${OSTYPE:-}" in
+    darwin*) printf 'launchd' ;;
+    linux*)  if command -v systemctl >/dev/null 2>&1; then printf 'systemd'; else printf 'none'; fi ;;
+    *)       printf 'none' ;;
+  esac
+}
+INIT_SYSTEM="$(detect_init_system)"
+
+# Job files the platform registers: a plist pair under ~/Library/LaunchAgents
+# on launchd, unit files under ~/.config/systemd/user on systemd (none → no
+# job; install.sh refuses before writing anything).
+if [ "$INIT_SYSTEM" = "systemd" ]; then
+  DAEMON_JOB_DST="${HOME}/.config/systemd/user/hookline-daemon.service"
+  DAEMON_JOB_LABEL="hookline-daemon.service"
+  WATCHDOG_JOB_DST="${HOME}/.config/systemd/user/hookline-watchdog.timer"
+  WATCHDOG_JOB_LABEL="hookline-watchdog.timer"
+else
+  DAEMON_JOB_DST="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+  DAEMON_JOB_LABEL="$PLIST_LABEL"
+  WATCHDOG_JOB_DST="${HOME}/Library/LaunchAgents/${WATCHDOG_PLIST_LABEL}.plist"
+  WATCHDOG_JOB_LABEL="$WATCHDOG_PLIST_LABEL"
+fi
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 DISABLED_FLAG="${HOME}/.config/hookline/disabled"
@@ -31,7 +58,7 @@ Commands:
   doctor          Diagnose the whole notification chain; fix what it can
   setup           Guided setup: transport, topic + QR, tmux check, live test
   topic [name]    Show current topic, or switch to a new one and restart daemon
-  daemon start    Start the hookline daemon (registers with launchd)
+  daemon start    Start the hookline daemon (registers with launchd/systemd)
   daemon stop     Stop the daemon
   daemon restart  Restart the daemon
   daemon status   Show daemon status
@@ -539,11 +566,15 @@ cmd_daemon() {
         echo "daemon already running"
         return 0
       fi
-      if [ ! -f "$PLIST_DST" ]; then
+      if [ ! -f "$DAEMON_JOB_DST" ]; then
         echo "daemon not installed — run install.sh first"
         return 1
       fi
-      launchctl load "$PLIST_DST" 2>/dev/null
+      if [ "$INIT_SYSTEM" = "systemd" ]; then
+        systemctl --user enable --now "$DAEMON_JOB_LABEL"
+      else
+        launchctl load "$DAEMON_JOB_DST" 2>/dev/null
+      fi
       # Poll for up to ~5s — the daemon needs a moment to bind the socket and
       # start answering status queries; a single short sleep gives false negatives.
       for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -559,7 +590,13 @@ cmd_daemon() {
       ;;
 
     stop)
-      launchctl unload "$PLIST_DST" 2>/dev/null
+      # disable (not just stop) so the watchdog's is-enabled check sees a
+      # deliberately stopped daemon and stands down instead of restarting it.
+      if [ "$INIT_SYSTEM" = "systemd" ]; then
+        systemctl --user disable --now "$DAEMON_JOB_LABEL" 2>/dev/null || true
+      else
+        launchctl unload "$DAEMON_JOB_DST" 2>/dev/null
+      fi
       if [ -f "$DAEMON_PID" ]; then
         kill "$(cat "$DAEMON_PID")" 2>/dev/null
       fi
@@ -594,7 +631,7 @@ cmd_daemon() {
             *)       echo "  sse:        ${sse}s" ;;
           esac
         fi
-      elif [ -f "$PLIST_DST" ]; then
+      elif [ -f "$DAEMON_JOB_DST" ]; then
         echo "  NOT running (installed, not started — run: hookline daemon start)"
       else
         echo "  NOT installed — run install.sh"
@@ -743,8 +780,8 @@ cmd_status() {
 
 # ── doctor ─────────────────────────────────────────────────────────────────────
 # Diagnoses the whole notification chain and fixes what it can. Set
-# HOOKLINE_DOCTOR_NO_FIX=1 for report-only mode (never touches launchd —
-# used by the sandboxed doctor-test recipe).
+# HOOKLINE_DOCTOR_NO_FIX=1 for report-only mode (never touches launchd or
+# systemd — used by the sandboxed doctor-test recipe).
 
 DOC_OK=0
 DOC_FAIL=0
@@ -764,11 +801,16 @@ doctor_restart_daemon() {
     doc_skip "fix disabled (HOOKLINE_DOCTOR_NO_FIX)"
     return 1
   fi
-  if ! command -v launchctl >/dev/null 2>&1; then
+  if [ "$INIT_SYSTEM" = "systemd" ]; then
+    if ! command -v systemctl >/dev/null 2>&1; then
+      doc_skip "cannot restart: systemctl unavailable"
+      return 1
+    fi
+  elif ! command -v launchctl >/dev/null 2>&1; then
     doc_skip "cannot restart: launchctl unavailable (macOS only)"
     return 1
   fi
-  if [ ! -f "$PLIST_DST" ]; then
+  if [ ! -f "$DAEMON_JOB_DST" ]; then
     doc_skip "cannot restart: daemon not installed"
     return 1
   fi
@@ -865,14 +907,27 @@ cmd_doctor() {
   echo
 
   echo "── Daemon"
-  if [ ! -f "$PLIST_DST" ]; then
+  if [ ! -f "$DAEMON_JOB_DST" ]; then
     doc_fail "daemon not installed — run: bash install.sh"
-  else
+  elif [ "$INIT_SYSTEM" = "systemd" ]; then
+    if command -v systemctl >/dev/null 2>&1 && ! doctor_no_fix; then
+      if systemctl --user is-enabled --quiet "$DAEMON_JOB_LABEL"; then
+        doc_ok "systemd: daemon unit enabled"
+      elif systemctl --user enable --now "$DAEMON_JOB_LABEL" 2>/dev/null \
+           && systemctl --user is-enabled --quiet "$DAEMON_JOB_LABEL"; then
+        doc_fixed "systemd: daemon unit was disabled — enabled and started"
+      else
+        doc_fail "systemd: daemon unit not enabled — run: hookline daemon start"
+      fi
+    else
+      doc_skip "systemd checks disabled (report-only mode or no systemctl)"
+    fi
+  elif [ "$INIT_SYSTEM" = "launchd" ]; then
     if command -v launchctl >/dev/null 2>&1 && ! doctor_no_fix; then
       if launchctl list "$PLIST_LABEL" &>/dev/null; then
         doc_ok "launchd: daemon job loaded"
       else
-        if launchctl load "$PLIST_DST" 2>/dev/null && launchctl list "$PLIST_LABEL" &>/dev/null; then
+        if launchctl load "$DAEMON_JOB_DST" 2>/dev/null && launchctl list "$PLIST_LABEL" &>/dev/null; then
           doc_fixed "launchd: daemon job was unloaded — loaded"
         else
           doc_fail "launchd: daemon job not loaded — run: hookline daemon start"
@@ -881,7 +936,11 @@ cmd_doctor() {
     else
       doc_skip "launchd checks disabled (report-only mode or no launchctl)"
     fi
+  else
+    doc_skip "init system not detected (no launchd/systemd)"
+  fi
 
+  if [ -f "$DAEMON_JOB_DST" ]; then
     _stale_reason=""
     if daemon_running; then
       info=$(daemon_query)
@@ -928,12 +987,24 @@ cmd_doctor() {
   echo
 
   echo "── Watchdog"
-  if [ ! -f "$WATCHDOG_PLIST_DST" ]; then
+  if [ ! -f "$WATCHDOG_JOB_DST" ]; then
     doc_fail "watchdog not installed — run: bash install.sh (restarts a hung daemon every 60s)"
-  elif command -v launchctl >/dev/null 2>&1 && ! doctor_no_fix; then
+  elif [ "$INIT_SYSTEM" = "systemd" ]; then
+    if command -v systemctl >/dev/null 2>&1 && ! doctor_no_fix; then
+      if systemctl --user is-enabled --quiet "$WATCHDOG_JOB_LABEL"; then
+        doc_ok "systemd: watchdog timer enabled"
+      elif systemctl --user enable --now "$WATCHDOG_JOB_LABEL" 2>/dev/null; then
+        doc_fixed "watchdog timer was disabled — enabled"
+      else
+        doc_fail "watchdog timer not enabled — run: bash install.sh"
+      fi
+    else
+      doc_skip "systemd checks disabled (report-only mode or no systemctl)"
+    fi
+  elif [ "$INIT_SYSTEM" = "launchd" ] && command -v launchctl >/dev/null 2>&1 && ! doctor_no_fix; then
     if launchctl list "$WATCHDOG_PLIST_LABEL" &>/dev/null; then
       doc_ok "launchd: watchdog job loaded"
-    elif launchctl load "$WATCHDOG_PLIST_DST" 2>/dev/null; then
+    elif launchctl load "$WATCHDOG_JOB_DST" 2>/dev/null; then
       doc_fixed "watchdog job was unloaded — loaded"
     else
       doc_fail "watchdog job not loaded — run: bash install.sh"

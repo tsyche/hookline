@@ -5,6 +5,27 @@ HOOK_DIR_DST="${HOME}/.local/share/hookline/hooks"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BB="${HOME}/.claude-bb/settings.json"
 
+# Init system (same detection as install.sh): HOOKLINE_INIT_SYSTEM overrides,
+# else OSTYPE auto-detect. Only gates system calls — file removal below is
+# file-driven, so a mismatch (e.g. INIT=none) still cleans up.
+detect_init_system() {
+  case "${HOOKLINE_INIT_SYSTEM:-}" in
+    launchd|systemd|none) printf '%s' "${HOOKLINE_INIT_SYSTEM}"; return 0 ;;
+  esac
+  case "${OSTYPE:-}" in
+    darwin*) printf 'launchd' ;;
+    linux*)  if command -v systemctl >/dev/null 2>&1; then printf 'systemd'; else printf 'none'; fi ;;
+    *)       printf 'none' ;;
+  esac
+}
+INIT_SYSTEM="$(detect_init_system)"
+
+DAEMON_PLIST="${HOME}/Library/LaunchAgents/com.hookline.daemon.plist"
+WATCHDOG_PLIST="${HOME}/Library/LaunchAgents/com.hookline.watchdog.plist"
+DAEMON_UNIT="${HOME}/.config/systemd/user/hookline-daemon.service"
+WATCHDOG_UNIT="${HOME}/.config/systemd/user/hookline-watchdog.service"
+WATCHDOG_TIMER="${HOME}/.config/systemd/user/hookline-watchdog.timer"
+
 echo "=== hookline uninstaller ==="
 
 # Remove hook registrations from every Claude-family settings file (per-provider
@@ -20,33 +41,51 @@ done
 rm -rf "$HOOK_DIR_DST"
 echo "Removed $HOOK_DIR_DST"
 
-# Remove the daemon launchd job (inverse of install.sh) — unload first so
-# KeepAlive can't respawn a daemon whose files are about to disappear.
-# HOOKLINE_SANDBOX=1 (scripts/install-test.sh) skips launchctl entirely.
-DAEMON_PLIST="${HOME}/Library/LaunchAgents/com.hookline.daemon.plist"
-if [ -f "$DAEMON_PLIST" ]; then
-  if [ "${HOOKLINE_SANDBOX:-0}" != "1" ]; then
-    launchctl unload "$DAEMON_PLIST" 2>/dev/null || true
+# Stop the daemon jobs before removing files (launchd KeepAlive / systemd
+# Restart would respawn a daemon whose files are about to disappear).
+# HOOKLINE_SANDBOX=1 (scripts/install-test.sh) skips the system call entirely.
+if [ "${HOOKLINE_SANDBOX:-0}" != "1" ]; then
+  if [ "$INIT_SYSTEM" = "systemd" ]; then
+    [ ! -f "$DAEMON_UNIT" ] || systemctl --user disable --now hookline-daemon.service 2>/dev/null || true
+    [ ! -f "$WATCHDOG_TIMER" ] || systemctl --user disable --now hookline-watchdog.timer 2>/dev/null || true
+  else
+    [ ! -f "$DAEMON_PLIST" ] || { launchctl unload "$DAEMON_PLIST" 2>/dev/null || true; }
+    [ ! -f "$WATCHDOG_PLIST" ] || { launchctl unload "$WATCHDOG_PLIST" 2>/dev/null || true; }
   fi
+fi
+
+# Remove the daemon job (file-driven inverse of install.sh — removes whatever
+# the installed platform wrote)
+if [ -f "$DAEMON_PLIST" ]; then
   rm -f "$DAEMON_PLIST"
   echo "Removed daemon launchd job"
 fi
+if [ -f "$DAEMON_UNIT" ]; then
+  rm -f "$DAEMON_UNIT"
+  echo "Removed daemon systemd unit"
+fi
 
-# Remove the heartbeat watchdog (unload first so it can't restart a daemon
-# that no longer exists)
-WATCHDOG_PLIST="${HOME}/Library/LaunchAgents/com.hookline.watchdog.plist"
+# Remove the heartbeat watchdog (plist / service+timer pair)
 if [ -f "$WATCHDOG_PLIST" ]; then
-  if [ "${HOOKLINE_SANDBOX:-0}" != "1" ]; then
-    launchctl unload "$WATCHDOG_PLIST" 2>/dev/null || true
-  fi
   rm -f "$WATCHDOG_PLIST"
   echo "Removed watchdog launchd job"
+fi
+if [ -f "$WATCHDOG_UNIT" ] || [ -f "$WATCHDOG_TIMER" ]; then
+  rm -f "$WATCHDOG_UNIT" "$WATCHDOG_TIMER"
+  echo "Removed watchdog systemd units"
+fi
+if [ "$INIT_SYSTEM" = "systemd" ] && [ "${HOOKLINE_SANDBOX:-0}" != "1" ]; then
+  systemctl --user daemon-reload 2>/dev/null || true
 fi
 rm -f "${HOME}/.local/share/hookline/watchdog.py"
 rm -f "${HOME}/.local/share/hookline/VERSION"
 
-# Remove the CLI (sandbox mode never touches /usr/local/bin)
-if [ "${HOOKLINE_SANDBOX:-0}" != "1" ] && { [ -f /usr/local/bin/hookline ] || [ -L /usr/local/bin/hookline ]; }; then
+# Remove the CLI (HOOKLINE_CLI_DIR is authoritative when set; sandbox mode
+# never touches /usr/local/bin)
+if [ -n "${HOOKLINE_CLI_DIR:-}" ] && [ -f "$HOOKLINE_CLI_DIR" ]; then
+  rm -f "$HOOKLINE_CLI_DIR"
+  echo "Removed $HOOKLINE_CLI_DIR"
+elif [ "${HOOKLINE_SANDBOX:-0}" != "1" ] && { [ -f /usr/local/bin/hookline ] || [ -L /usr/local/bin/hookline ]; }; then
   rm -f /usr/local/bin/hookline
   echo "Removed /usr/local/bin/hookline"
 fi

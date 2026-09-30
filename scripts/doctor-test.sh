@@ -1,10 +1,11 @@
 #!/bin/bash
 # Sandboxed checks for `hookline doctor` — fake HOME, no network, no launchd.
 #
-# Runs the real CLI against four prepared HOME layouts and asserts the
+# Runs the real CLI against prepared HOME layouts and asserts the
 # doctor's report lines and exit code. HOOKLINE_DOCTOR_NO_FIX=1 keeps every
 # run report-only, so the recipe can never touch the machine's real launchd
-# jobs even when the repo lives on a machine with hookline installed.
+# or systemd jobs even when the repo lives on a machine with hookline
+# installed; HOOKLINE_INIT_SYSTEM pins the platform layout per case.
 #
 # Usage: bash scripts/doctor-test.sh
 set -u
@@ -101,11 +102,14 @@ start_http_server() { # start_http_server <home> -> echoes port
 }
 
 # run_case <name> <home> <expected-rc> <pattern>...  (all patterns must appear)
+# CASE_INIT pins the init system (default launchd; set to systemd for unit
+# layouts) so the CLI behaves identically on macOS and Linux CI.
 run_case() {
   local name="$1" home="$2" want_rc="$3"
   shift 3
   local out rc ok=1 pat
-  out=$(HOME="$home" HOOKLINE_DOCTOR_NO_FIX=1 bash "$CLI" doctor 2>&1)
+  out=$(HOME="$home" HOOKLINE_INIT_SYSTEM="${CASE_INIT:-launchd}" HOOKLINE_DOCTOR_NO_FIX=1 \
+        bash "$CLI" doctor 2>&1)
   rc=$?
 
   [ "$rc" -eq "$want_rc" ] || ok=0
@@ -171,6 +175,24 @@ s.close()
 run_case "stale-socket" "$h" 1 \
   "stale socket file" \
   "could not auto-fix"
+
+# ── 5. systemd unit layout (NO_FIX) → report-only skips systemctl, rc=0 ──
+h=$(new_home "http://127.0.0.1:9")
+port=$(start_http_server "$h") || exit 1
+sed -i.bak "s|http://127.0.0.1:9|http://127.0.0.1:${port}|" "$h/.config/hookline/config" && rm -f "$h/.config/hookline/config.bak"
+mkdir -p "$h/.config/systemd/user"
+touch "$h/.config/systemd/user/hookline-daemon.service" \
+      "$h/.config/systemd/user/hookline-watchdog.service" \
+      "$h/.config/systemd/user/hookline-watchdog.timer"
+start_fake_daemon "$h" || exit 1
+CASE_INIT=systemd
+run_case "healthy-systemd" "$h" 0 \
+  "daemon responsive (pid=" \
+  "systemd checks disabled" \
+  "heartbeat 0s" \
+  "sse 0s" \
+  "0 failed"
+CASE_INIT=launchd
 
 echo
 echo "doctor-test: $PASS passed, $FAIL failed"

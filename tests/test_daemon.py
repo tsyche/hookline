@@ -643,5 +643,77 @@ class TestWatchdog(unittest.TestCase):
         self.assertEqual(d(True, True, False, False), "ok")
 
 
+class TestWatchdogInitSystem(unittest.TestCase):
+    """Platform dispatch: HOOKLINE_INIT_SYSTEM override + launchd/systemd/none
+    branches in the watchdog (decide() itself stays pure — covered above)."""
+
+    def test_override_wins_for_every_value(self):
+        for name in ("launchd", "systemd", "none"):
+            with mock.patch.dict(os.environ, {"HOOKLINE_INIT_SYSTEM": name}):
+                self.assertEqual(watchdog_mod.init_system(), name)
+
+    def test_unknown_override_falls_through_to_platform(self):
+        with mock.patch.dict(os.environ, {"HOOKLINE_INIT_SYSTEM": "bogus"}):
+            detected = watchdog_mod.init_system()
+        self.assertIn(detected, ("launchd", "systemd", "none"))
+
+    def test_daemon_job_installed_dispatches_by_platform(self):
+        unit = os.path.join(HOME, ".config/systemd/user/hookline-daemon.service")
+        os.makedirs(os.path.dirname(unit), exist_ok=True)
+        with open(unit, "w"):
+            pass
+        with mock.patch.object(watchdog_mod, "init_system", return_value="systemd"):
+            self.assertTrue(watchdog_mod.daemon_job_installed())
+        with mock.patch.object(watchdog_mod, "init_system", return_value="launchd"):
+            self.assertFalse(watchdog_mod.daemon_job_installed())
+        os.remove(unit)
+        with mock.patch.object(watchdog_mod, "init_system", return_value="systemd"):
+            self.assertFalse(watchdog_mod.daemon_job_installed())
+
+    def test_daemon_loaded_launchd_uses_launchctl(self):
+        with mock.patch.object(watchdog_mod, "init_system", return_value="launchd"), \
+             mock.patch.object(watchdog_mod.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(watchdog_mod.daemon_loaded())
+        run.assert_called_once_with(
+            ["launchctl", "list", "com.hookline.daemon"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def test_daemon_loaded_systemd_uses_is_enabled(self):
+        with mock.patch.object(watchdog_mod, "init_system", return_value="systemd"), \
+             mock.patch.object(watchdog_mod, "_systemctl", return_value="/usr/bin/systemctl"), \
+             mock.patch.object(watchdog_mod.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(watchdog_mod.daemon_loaded())
+        run.assert_called_once_with(
+            ["/usr/bin/systemctl", "--user", "is-enabled", "--quiet",
+             "hookline-daemon.service"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def test_daemon_loaded_none_skips_subprocess(self):
+        with mock.patch.object(watchdog_mod, "init_system", return_value="none"), \
+             mock.patch.object(watchdog_mod.subprocess, "run") as run:
+            self.assertFalse(watchdog_mod.daemon_loaded())
+        run.assert_not_called()
+
+    def test_restart_daemon_systemd_issues_restart(self):
+        with mock.patch.object(watchdog_mod, "init_system", return_value="systemd"), \
+             mock.patch.object(watchdog_mod, "_systemctl", return_value="/usr/bin/systemctl"), \
+             mock.patch.object(watchdog_mod.subprocess, "run") as run:
+            watchdog_mod.restart_daemon()
+        run.assert_called_once_with(
+            ["/usr/bin/systemctl", "--user", "restart", "hookline-daemon.service"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def test_restart_daemon_none_is_noop(self):
+        with mock.patch.object(watchdog_mod, "init_system", return_value="none"), \
+             mock.patch.object(watchdog_mod.subprocess, "run") as run:
+            watchdog_mod.restart_daemon()
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

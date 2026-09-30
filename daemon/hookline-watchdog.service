@@ -1,0 +1,8 @@
+[Unit]
+Description=hookline daemon heartbeat watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 HOOKLINE_WATCHDOG_PATH
+StandardOutput=append:HOOKLINE_LOG_DIR/watchdog.log
+StandardError=append:HOOKLINE_LOG_DIR/watchdog.log

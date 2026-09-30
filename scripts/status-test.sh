@@ -110,7 +110,7 @@ run_case() {
   local name="$1" home="$2" want_rc="$3"
   shift 3
   local out rc ok=1 pat
-  out=$(HOME="$home" bash "$CLI" status 2>&1)
+  out=$(HOME="$home" HOOKLINE_INIT_SYSTEM=launchd bash "$CLI" status 2>&1)
   rc=$?
 
   [ "$rc" -eq "$want_rc" ] || ok=0
@@ -175,7 +175,7 @@ run_case "version-outdated" "$h" 0 \
 # ── 5. up-to-date install → quiet checkmark, no update line, rc=0 ──
 h=$(new_home "http://127.0.0.1:${port}")
 echo "9.9.9" > "$h/.local/share/hookline/VERSION"
-out=$(HOME="$h" bash "$CLI" status 2>&1); rc=$?
+out=$(HOME="$h" HOOKLINE_INIT_SYSTEM=launchd bash "$CLI" status 2>&1); rc=$?
 ok=1
 case "$out" in *"9.9.9 ✓"*) ;; *) ok=0; echo "  missing pattern: 9.9.9 ✓" ;; esac
 case "$out" in *"update available"*) ok=0; echo "  unexpected: update available line" ;; esac

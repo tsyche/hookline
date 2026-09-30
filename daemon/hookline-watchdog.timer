@@ -1,0 +1,13 @@
+[Unit]
+Description=run the hookline watchdog every 60s (launchd StartInterval parity)
+
+[Timer]
+# First run 60s after the timer is active, then every 60s — same cadence as
+# launchd's StartInterval=60.
+OnActiveSec=60
+OnUnitActiveSec=60
+AccuracySec=1s
+Unit=hookline-watchdog.service
+
+[Install]
+WantedBy=timers.target
