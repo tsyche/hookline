@@ -45,22 +45,15 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Notification metadata — know which alert is which at a glance** (~1–2h) — Phase 7 item (Tim add, 2026-09-30)
-2. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 7 item
-3. **Bare-terminal screen capture beyond iTerm2** (~1–2h) — Phase 7 item
-
-> All three are Phase 7 items. Previous rounds (`context`, doctor per-provider checks,
-> pattern CLI, CONTRIBUTING.md, in-repo git hooks) shipped 2026-09-29/30 in
-> **v1.7.0/v1.8.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
+> Next round — notification metadata, typed-reply disambiguation, bare-terminal screen
+> capture — all shipped 2026-09-30 (Phase 7, unreleased on main) — see the
+> [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md). Previous rounds (`context`, doctor
+> per-provider checks, pattern CLI, CONTRIBUTING.md, in-repo git hooks) shipped
+> 2026-09-29/30 in **v1.7.0/v1.8.0**. Next round: TBD — drop three Phase 7 candidates
+> here.
 
 ## Phase 7 — Medium-term
 
-- **Notification metadata — know which alert is which at a glance** (~1–2h) — with several sessions prompting at once the phone stack is unreadable: title is only `[tmux-session / project] ToolName` (`core.sh` label) and the body opens straight into `$ cmd` — no provider, no work context. Add at minimum the provider to the title (`[claude] …` / `grok …`), and a body header line carrying identifying context (project, `git branch --show-current`, working dir or a short task label) before the command/details; keep every derived sender consistent (prompt, expiry, invalid-reply, `context` summary, daemon retry/feedback — they reuse `notify_title`). Config should be able to drop the context line (quiet mode / privacy). Acceptance: golden cases assert the new title+header shape per provider, all existing cases updated in one pass
-- **Typed-reply disambiguation for multiple pending prompts** — today a bare typed reply (`allow`/`deny`/`retry`, or an option number/letter) only resolves when exactly one prompt is pending (`handle_typed_reply` logs and drops otherwise); with 2+ providers prompting at once, buttons still work (they carry `req_id`) but typed text is ignored. Prompt-picker flow: one pending question → number picks its option; several pending → reply `1`/`2` to pick the prompt first, then the option. ~1–2h
-- **Bare-terminal screen capture beyond iTerm2** (~1–2h) — watcher-side screenshot
-  parsing (grok allow-once row, claude read) reads iTerm2 session contents only; add
-  Terminal.app / WezTerm capture with the same graceful no-inject fallback (unreadable
-  screen → prompt stays, no keys sent)
 - **Per-project config** — `.hookline` file at project root to override grace period, add project-specific safe patterns, set notification priority; loaded in addition to `~/.config/hookline/config`
 - **Idle-aware grace period** — detect system idle time; skip grace period and notify immediately when machine has been idle
 - **Companion app — one-tap deep link to the right session** — a small Android companion app that registers a custom URL scheme (e.g. `hookline://connect?host=mac&session=hookline`). hookline embeds the connect command (including the exact tmux session for the project that fired) as a `view`-action button on the notification; tapping it opens the app, which fires Termux's `RUN_COMMAND` intent with the *typed* extras Termux needs (boolean `RUN_COMMAND_BACKGROUND=false`, `String[]` arguments) — the thing a bare `ssh://` link or a string-only ntfy broadcast can't do. Lands you directly in the correct session, no manual picker. Why a companion app and not config + ConnectBot/Tasker: Termux registers no URL scheme, and ntfy can only send string intent extras, so the only clean Android paths are (a) ConnectBot as an `ssh://` handler — separate app, bare shell, or (b) a Tasker/MacroDroid bridge — paid/fragile, terrible onboarding. A first-party app owns the whole bridge with zero third-party glue. **Endgame:** the same app can grow a persistent connection straight to the hookline daemon (see [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)) — at which point it receives the approval request *and* launches the session in-process, dropping the ntfy dependency on the receive side entirely. (Tracked here after a manual-flow decision: today, a missed prompt just sends a plain "prompt expired" notification and you connect by hand — VPN → Termux → `mac` → pick session.)
