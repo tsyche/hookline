@@ -4,6 +4,10 @@
 `ROADMAP.md` at the repo root. Provider names here are generic — private local provider ids
 live only in untracked config (`~/.config/hookline/config`).
 
+> **Phase numbering:** as of 2026-09-30 the active roadmap renumbered its forward phases to
+> match reading order (Medium-term = 7, Future = 8, Remote control + E2E = 9). Entries below
+> keep the phase number they were filed under when shipped.
+
 ## Index
 
 | Era | Shipped | Notes |

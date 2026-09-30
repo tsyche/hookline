@@ -300,7 +300,7 @@ the CLI, and installed files. Optionally removes config and logs.
 
 When the phone answers a prompt in a bare terminal, hookline first focuses the exact session that asked (iTerm2 by session id, WezTerm by pane id) so keystrokes never land in a neighboring window; Terminal.app and unknown terminals keep the previous frontmost behavior. tmux needs none of this — `send-keys` targets the pane directly.
 
-On Linux, tmux `send-keys` is the injection path that works today; bare-terminal keystroke injection (`xdotool`/`ydotool`) is planned (ROADMAP Phase 9 Tier 2).
+On Linux, tmux `send-keys` is the injection path that works today; bare-terminal keystroke injection (`xdotool`/`ydotool`) is planned (ROADMAP Phase 8 Tier 2).
 
 For the AppleScript terminals, keystroke injection is performed by the hook process (a child of your terminal), so macOS Accessibility permission is only needed for the terminal app itself — never for a background process. tmux injection uses `tmux send-keys` (run by the daemon) and needs no Accessibility permission at all.
 

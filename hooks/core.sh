@@ -205,7 +205,7 @@ build_question_message() {
 # before keystroke injection in a bare terminal. With several sessions of the
 # same app open, System Events keystrokes land in whichever window that app
 # currently focuses — this selects the prompt's own window/tab first so the
-# phone answer reaches the right one (Phase 8 multi-session targeting).
+# phone answer reaches the right one (Phase 7 multi-session targeting).
 # tmux never reaches here (daemon/watcher send-keys target the pane directly).
 # Returns 1 when there is no stable id (Terminal.app, unknown terminals) —
 # callers keep the existing frontmost behavior. HOOKLINE_FOCUS_DRY_RUN=1

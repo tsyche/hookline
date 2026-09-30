@@ -4,9 +4,9 @@
 > [docs/ledger/ROADMAP_SHIPPED.md](docs/ledger/ROADMAP_SHIPPED.md). `VERSION` is
 > the source of truth, and the release workflow tags and publishes on the first main push
 > that carries a `VERSION` change. Sections below are **phases** (the same scheme as
-> Phases 0–4, house convention across projects), ordered next-up first: Phase 8
-> notification/UX → Phase 9 Linux Tier 2 (Tier 1 systemd shipped, acceptance pending)
-> → Phase 7 remote control + E2E.
+> Phases 0–4, house convention across projects), ordered next-up first: Phase 7
+> notification/UX → Phase 8 Linux Tier 2 (Tier 1 systemd shipped, acceptance pending)
+> → Phase 9 remote control + E2E.
 
 > **Status: multi-provider revival.** hookline was paused in maintenance mode (2026-06)
 > when Claude Code shipped native remote/mobile approvals — but that covers **claude
@@ -45,15 +45,15 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 
 ## Recommended Next 3
 
-1. **Notification metadata — know which alert is which at a glance** (~1–2h) — Phase 8 item (Tim add, 2026-09-30)
-2. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 8 item
-3. **Bare-terminal screen capture beyond iTerm2** (~1–2h) — Phase 8 item
+1. **Notification metadata — know which alert is which at a glance** (~1–2h) — Phase 7 item (Tim add, 2026-09-30)
+2. **Typed-reply disambiguation for multiple pending prompts** (~1–2h) — Phase 7 item
+3. **Bare-terminal screen capture beyond iTerm2** (~1–2h) — Phase 7 item
 
-> All three are Phase 8 items. Previous rounds (`context`, doctor per-provider checks,
+> All three are Phase 7 items. Previous rounds (`context`, doctor per-provider checks,
 > pattern CLI, CONTRIBUTING.md, in-repo git hooks) shipped 2026-09-29/30 in
 > **v1.7.0/v1.8.0** — see the [shipped ledger](docs/ledger/ROADMAP_SHIPPED.md).
 
-## Phase 8 — Medium-term
+## Phase 7 — Medium-term
 
 - **Notification metadata — know which alert is which at a glance** (~1–2h) — with several sessions prompting at once the phone stack is unreadable: title is only `[tmux-session / project] ToolName` (`core.sh` label) and the body opens straight into `$ cmd` — no provider, no work context. Add at minimum the provider to the title (`[claude] …` / `grok …`), and a body header line carrying identifying context (project, `git branch --show-current`, working dir or a short task label) before the command/details; keep every derived sender consistent (prompt, expiry, invalid-reply, `context` summary, daemon retry/feedback — they reuse `notify_title`). Config should be able to drop the context line (quiet mode / privacy). Acceptance: golden cases assert the new title+header shape per provider, all existing cases updated in one pass
 - **Typed-reply disambiguation for multiple pending prompts** — today a bare typed reply (`allow`/`deny`/`retry`, or an option number/letter) only resolves when exactly one prompt is pending (`handle_typed_reply` logs and drops otherwise); with 2+ providers prompting at once, buttons still work (they carry `req_id`) but typed text is ignored. Prompt-picker flow: one pending question → number picks its option; several pending → reply `1`/`2` to pick the prompt first, then the option. ~1–2h
@@ -68,7 +68,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 
-## Phase 9 — Future
+## Phase 8 — Future
 
 - **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core
 - **Direct mode via Tailscale / VPN** — zero relay dependency; the endpoint design (port `7676`, `/pending`, `/respond`) and mobile interface options (PWA, Shortcut, companion app) are specced in [Relay-free Design](#relay-free-design-tailscale--vpn-direct-mode)
@@ -99,7 +99,7 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **Always-deny patterns** — companion to allowlist for commands that should always be blocked
 - **Time-based rules** — configurable schedule (e.g. notify immediately after 6pm)
 
-## Phase 7 — Remote control + E2E
+## Phase 9 — Remote control + E2E
 
 Feasibility assessed 2026-09-25 — all hard pieces already proven in Phases 0–4.
 🧑 needs-human: on-device setup steps throughout.

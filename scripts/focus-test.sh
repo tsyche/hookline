@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sandboxed checks for focus_prompt_window (Phase 8 bare-terminal multi-session
+# Sandboxed checks for focus_prompt_window (Phase 7 bare-terminal multi-session
 # targeting) — HOOKLINE_FOCUS_DRY_RUN=1 prints the focus command instead of
 # running osascript/wezterm, so assertions run offline with no Accessibility
 # or terminal-control requirements.
