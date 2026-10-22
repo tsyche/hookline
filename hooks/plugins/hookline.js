@@ -4,16 +4,20 @@
 // auto-loads that directory; no opencode.jsonc edit, no config clobber).
 //
 // Contract:
-//   permission.asked   → spawn `hookline.sh opencode` with the permission
-//                        object on stdin. The native TUI prompt is already
-//                        showing; the hook runs the provider-neutral core
-//                        (grace period, allowlist, daemon/ntfy phone flow).
-//   permission.replied → append a line to the per-session counter file; the
-//                        hook's progress signal sees growth and tears down
-//                        its background flow (local or programmatic answer).
-//   question.asked / question.v2.asked  → same spawn; stdin carries the
-//                        question payload (questions[] + options instead of a
-//                        permission). The native question dialog is showing.
+//   permission.asked   → 3s hold, then spawn `hookline.sh opencode` unless a
+//                        matching permission.replied already landed (auto-answer
+//                        from config rule / always-allow memory). The native
+//                        TUI prompt is already showing; the hook runs the
+//                        provider-neutral core (grace period, allowlist,
+//                        daemon/ntfy phone flow).
+//   permission.replied → cancels the pending asked-hold for that permissionID;
+//                        appends a line to the per-session counter file so the
+//                        hook's progress signal sees growth and tears down its
+//                        background flow (local or programmatic answer).
+//   question.asked / question.v2.asked  → spawn immediately (always need a human);
+//                        stdin carries the question payload (questions[] + options
+//                        instead of a permission). The native question dialog is
+//                        showing.
 //   question.replied / question.rejected (+ .v2) → same counter-file append:
 //                        answering or dismissing the dialog at the terminal
 //                        cancels the hook's grace/notification flow.
@@ -160,9 +164,16 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
     return qClientP;
   };
 
+  // Pending permission.asked timers keyed by permission ID. Lives in plugin
+  // scope (not inside `event`) so it persists across event invocations.
+  const pendingAsked = new Map(); // permissionID → timeout handle
+
   return {
     dispose: async () => {
       try {
+        // Cancel any pending asked-timers so they don't fire after dispose.
+        for (const t of pendingAsked.values()) clearTimeout(t);
+        pendingAsked.clear();
         replyServer.close();
         unlinkSync(REPLY_SOCK);
       } catch {}
@@ -198,12 +209,38 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
         }
       };
 
+      // permission.asked can fire even when OpenCode is about to auto-answer
+      // (config rule / always-allow memory). Before spawning the phone flow,
+      // wait 3s and check whether a matching permission.replied already landed.
+      // Keyed by permission ID so concurrent asks don't cancel each other.
+      // (pendingAsked Map lives in plugin scope — see above.)
+
       if (
         event.type === "permission.asked" ||
         event.type === "question.asked" ||
         event.type === "question.v2.asked"
       ) {
-        spawnHook(event.properties);
+        const isPermission = event.type === "permission.asked";
+        if (!isPermission) {
+          // Questions always need a human — spawn immediately.
+          spawnHook(event.properties);
+        } else {
+          // v1: properties.id; v2: properties.data.id (also top-level id on some shapes)
+          const askedId =
+            event.properties?.id ?? event.properties?.data?.id ?? null;
+          if (askedId) {
+            const prior = pendingAsked.get(askedId);
+            if (prior) clearTimeout(prior);
+            const timer = setTimeout(() => {
+              pendingAsked.delete(askedId);
+              spawnHook(event.properties);
+            }, 3000);
+            pendingAsked.set(askedId, timer);
+          } else {
+            // No ID to track — fall back to immediate spawn.
+            spawnHook(event.properties);
+          }
+        }
       }
 
       if (
@@ -213,6 +250,19 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
         event.type === "question.v2.replied" ||
         event.type === "question.v2.rejected"
       ) {
+        // Cancel pending asked-timer for this specific permission ID.
+        // v1: properties.permissionID; v2: properties.data.requestID.
+        const repliedId =
+          event.properties?.permissionID ??
+          event.properties?.data?.requestID ??
+          null;
+        if (repliedId) {
+          const prior = pendingAsked.get(repliedId);
+          if (prior) {
+            clearTimeout(prior);
+            pendingAsked.delete(repliedId);
+          }
+        }
         appendCounter(event.properties.sessionID);
       }
     },

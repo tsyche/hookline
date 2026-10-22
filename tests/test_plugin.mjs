@@ -131,6 +131,58 @@ test("permission.asked spawns the hook with the payload on stdin", async () => {
   assert.equal(cap.cwd, "/proj");
 });
 
+test("permission.asked + immediate permission.replied skips the hook (auto-answer)", async () => {
+  writeFileSync(CAPTURE, "");
+  // Fire asked, then replied within the 3s hold window.
+  await hookline.event({
+    event: {
+      type: "permission.asked",
+      properties: { sessionID: "s-auto", id: "per_auto", permission: "bash" },
+    },
+  });
+  await hookline.event({
+    event: {
+      type: "permission.replied",
+      properties: { sessionID: "s-auto", permissionID: "per_auto", response: "once" },
+    },
+  });
+  // Give the 3s timer a chance to fire — it should NOT.
+  await new Promise((r) => setTimeout(r, 3500));
+  assert.ok(
+    !existsSync(CAPTURE) || !readFileSync(CAPTURE, "utf8").includes("/proj"),
+    "hook should not spawn when permission.replied lands before the 3s hold expires",
+  );
+});
+
+test("permission.asked + replied for a DIFFERENT ID still spawns the first", async () => {
+  writeFileSync(CAPTURE, "");
+  // Two concurrent asks; only the second is auto-answered.
+  await hookline.event({
+    event: {
+      type: "permission.asked",
+      properties: { sessionID: "s-multi", id: "per_a", permission: "bash" },
+    },
+  });
+  await hookline.event({
+    event: {
+      type: "permission.asked",
+      properties: { sessionID: "s-multi", id: "per_b", permission: "edit" },
+    },
+  });
+  // Auto-answer only per_b.
+  await hookline.event({
+    event: {
+      type: "permission.replied",
+      properties: { sessionID: "s-multi", permissionID: "per_b", response: "once" },
+    },
+  });
+  // per_a should still spawn after its 3s hold; per_b should not.
+  await waitFor(() => existsSync(CAPTURE) && readFileSync(CAPTURE, "utf8").includes("/proj"));
+  const cap = readCapture();
+  assert.equal(cap.payload.id, "per_a", "per_a should spawn (not auto-answered)");
+  assert.notEqual(cap.payload.id, "per_b", "per_b should be skipped (auto-answered)");
+});
+
 test("question.asked spawns the hook with the question payload", async () => {
   writeFileSync(CAPTURE, "");
   await hookline.event({
