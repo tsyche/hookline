@@ -73,6 +73,22 @@ const readCapture = () => {
 
 const calls = [];
 const client = {
+  session: {
+    get: async () => ({ data: {} }),
+    messages: async () => ({
+      data: [
+        { info: { role: "user" }, parts: [{ type: "text", text: "do it" }] },
+        {
+          info: { role: "assistant" },
+          parts: [{ type: "text", text: "All done." }, { type: "tool" }],
+        },
+      ],
+    }),
+    promptAsync: async (args) => {
+      calls.push({ kind: "prompt", args });
+      return { data: {} };
+    },
+  },
   postSessionIdPermissionsPermissionId: async (args) => {
     calls.push({ kind: "permission", args });
     return { data: { ok: true } };
@@ -264,6 +280,60 @@ test("bridge question-reject calls question.reject", async () => {
   assert.equal(call.kind, "question.reject");
   assert.equal(call.args.requestID, "que_10");
   assert.equal(call.args.directory, "/proj");
+});
+
+// ── session-done alerts ──────────────────────────────────────────────────────
+
+test("idle after a long busy turn spawns a done payload with the last assistant text", async () => {
+  writeFileSync(CAPTURE, "");
+  const ev = (type, status) => ({
+    event: { type, properties: { sessionID: "s-done", status } },
+  });
+  await hookline.event(ev("session.status", { type: "busy" }));
+  assert.equal(readFileSync(join(DATA_DIR, "opencode-turn-s-done"), "utf8"), "\n");
+  // backdate the busy start past the 60s minimum
+  const realNow = Date.now;
+  Date.now = () => realNow() + 120_000;
+  try {
+    await hookline.event(ev("session.status", { type: "idle" }));
+    await hookline.event({ event: { type: "session.idle", properties: { sessionID: "s-done" } } });
+  } finally {
+    Date.now = realNow;
+  }
+  await waitFor(() => existsSync(CAPTURE) && readFileSync(CAPTURE, "utf8").includes("/proj"));
+  const cap = readCapture();
+  assert.deepEqual(cap.payload, { hookline_event: "done", sessionID: "s-done", text: "All done." });
+});
+
+test("short turns and subagent sessions do not alert", async () => {
+  writeFileSync(CAPTURE, "");
+  const ev = (type, sid, status) => ({ event: { type, properties: { sessionID: sid, status } } });
+  await hookline.event(ev("session.status", "s-short", { type: "busy" }));
+  await hookline.event(ev("session.status", "s-short", { type: "idle" }));
+  const sub = client.session.get;
+  client.session.get = async () => ({ data: { parentID: "p" } });
+  const realNow = Date.now;
+  try {
+    await hookline.event(ev("session.status", "s-sub", { type: "busy" }));
+    Date.now = () => realNow() + 120_000;
+    await hookline.event(ev("session.status", "s-sub", { type: "idle" }));
+  } finally {
+    Date.now = realNow;
+    client.session.get = sub;
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(readFileSync(CAPTURE, "utf8"), "");
+});
+
+test("bridge prompt sends a new user message via promptAsync", async () => {
+  const n = calls.length;
+  sendBridge({ type: "prompt", session_id: "s-done", text: "keep going" });
+  await waitFor(() => calls.length > n);
+  assert.equal(calls[n].kind, "prompt");
+  assert.deepEqual(calls[n].args, {
+    path: { id: "s-done" },
+    body: { parts: [{ type: "text", text: "keep going" }] },
+  });
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────

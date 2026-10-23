@@ -20,6 +20,10 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   in-process SDK client can reply — permissions via `postSessionIdPermissionsPermissionId`,
   questions via `client.question.reply`/`reject`). Appends a local-answer line on
   `permission.replied` and `question.replied`/`question.rejected` for the away-detection signal.
+  Also session-done alerts: `session.status` busy/idle (or `session.idle`) after a turn
+  ≥ `HOOKLINE_DONE_MIN_SECS` spawns the hook with `{hookline_event:"done",text}`; the daemon
+  treats it as a free-text prompt (`go` / `do <text>`) and the bridge `prompt` message calls
+  `session.promptAsync`. Away signal = `opencode-turn-<sid>` (appended on busy).
 - **codex adapter** (`hooks/adapters/codex.sh`) — Bash. Interim Flow A hack over codex's
   `PermissionRequest` event: empty stdout declines, so codex's own approval menu shows; the
   background watcher injects Enter (approve, option 1 preselected) / Esc (cancel) — into the

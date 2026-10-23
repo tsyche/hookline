@@ -61,6 +61,8 @@ The setup wizard is what makes all tiers accessible. It should ask the right que
 - **PostToolUse feedback notifications** — optional low-priority phone notification after a tool completes showing what changed (e.g., "Edit: modified 3 lines in src/app.ts")
 - **Tool-aware notification priority** — writes to sensitive paths (`/etc`, repo root) get high-priority ntfy; `/tmp` writes get low priority
 
+- **Session-done alerts for claude/codex/grok** — opencode ships (plugin idle event → summary alert → `go` / `do <text>` reply). Claude needs a `Stop` hook plus tmux-inject continuation; codex/grok payloads unverified
+
 ## Phase 8 — Future
 
 - **Pluggable notification backends** — abstract the notify/poll layer behind a backend interface so hookline isn't ntfy-specific; ship adapters for Gotify, Telegram bot, and Pushover; community can add others without touching core

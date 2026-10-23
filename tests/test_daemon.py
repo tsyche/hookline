@@ -468,6 +468,40 @@ class TestTypedReply(unittest.TestCase):
             self.d.handle_typed_reply("d")
         self.assertEqual(self.handled, [("r1", "answer|Four")])
 
+    def arm_done(self):
+        with self.arm(options=("Continue",)) as m:
+            self.d.free_text.add("r1")
+        return m
+
+    def test_done_go_word_maps_to_continue(self):
+        with self.arm(options=("Continue",)):
+            self.d.free_text.add("r1")
+            self.d.handle_typed_reply("go")
+        self.assertEqual(self.handled, [("r1", "answer|Continue")])
+
+    def test_done_do_text_passes_through(self):
+        with self.arm(options=("Continue",)):
+            self.d.free_text.add("r1")
+            self.d.handle_typed_reply("do fix the flaky test, then run lint")
+        self.assertEqual(
+            self.handled, [("r1", "answer|fix the flaky test, then run lint")])
+
+    def test_done_garbage_gets_done_feedback(self):
+        with self.arm(options=("Continue",)):
+            self.d.free_text.add("r1")
+            self.d.handle_typed_reply("two")
+        self.assertEqual(self.handled, [])
+        self.assertIn("go, or do <instruction>", self.sent[0][1])
+
+    def test_do_text_ignored_without_done_prompt(self):
+        with self.arm():
+            self.d.handle_typed_reply("do something")
+        self.assertEqual(self.handled, [])
+
+    def test_typed_reply_re_allows_do_text(self):
+        self.assertTrue(daemon_mod.TYPED_REPLY_RE.match("do fix it, now!"))
+        self.assertFalse(daemon_mod.TYPED_REPLY_RE.match("not a do reply"))
+
     def test_reply_one_maps_to_first_label(self):
         with self.arm(options=("Alpha", "Beta", "Gamma")):
             self.d.handle_typed_reply("1")

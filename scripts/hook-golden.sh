@@ -341,6 +341,16 @@ run_case_notify_payload "opencode-q3-notify-option-actions" opencode "$OPC_Q3" \
 run_case_notify_payload "opencode-permission-notify-default-trio" opencode "$OPC_ASK" \
   '(.no_actions | not) and (.actions | length) == 0'
 
+# session-done alert (plugin on idle): summary + Continue button, free-text flag
+OPC_DONE='{"hookline_event":"done","sessionID":"golden-1","text":"Shipped phase 2. Next: wire retries."}'
+run_case_log "opencode-done-ask" opencode "OUTPUT: session done" has "$OPC_DONE"
+
+run_case_notify_payload "opencode-done-notify-free-text" opencode "$OPC_DONE" \
+  '.free_text == true and .options == ["Continue"]
+   and .actions[0].payload == "answer|Continue"
+   and (.title | endswith("] Done"))
+   and (.message | contains("Shipped phase 2") and contains("do <instruction>"))'
+
 # ── snooze: an active mute window suppresses the phone notify entirely — the
 #    decision still lands on stdout and the watcher exits cleanly (lock is
 #    released). A stale window notifies exactly like no snooze.

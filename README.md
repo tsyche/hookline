@@ -226,7 +226,13 @@ HOOKLINE_NTFY_PASSWORD=""               # for self-hosted ntfy with auth
 HOOKLINE_PROVIDERS="claude codex opencode grok"    # provider registry; unset = all enabled
 HOOKLINE_ALERT_HEADER=1                # body metadata line (project · branch · dir); 0 = title tag only
 HOOKLINE_CONTEXT_TIMEOUT=45            # seconds a typed `context` summary may take
+HOOKLINE_DONE_ALERTS=1                 # opencode session-done alerts; 0 = off
+HOOKLINE_DONE_MIN_SECS=60              # opencode: min turn length before a done alert (plugin env)
 ```
+
+### Session-done alerts (opencode)
+
+When an opencode turn runs longer than `HOOKLINE_DONE_MIN_SECS` and goes idle, the plugin sends the agent's final message to your phone (same grace period and away detection as prompts, so nothing fires if you answer at the terminal). Reply `go` (or tap **Continue**) to send "continue with the next step you would suggest", or `do <instruction>` to send your own prompt. Subagent sessions are skipped. Other providers: not yet.
 
 Changes take effect immediately — no reinstall needed. `hookline setup` walks through
 all of it (transport, topic, subscription QR, tmux check, live test) without editing

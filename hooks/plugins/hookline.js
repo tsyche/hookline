@@ -97,6 +97,13 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
           logLine(
             `question replied ${JSON.stringify(msg.answers)} (${msg.request_id}) → ${JSON.stringify(r.data)}`,
           );
+        } else if (msg.type === "prompt") {
+          // session-done reply: send as a new user message, don't wait for the turn
+          const r = await client.session.promptAsync({
+            path: { id: msg.session_id },
+            body: { parts: [{ type: "text", text: msg.text }] },
+          });
+          logLine(`prompt sent (${msg.session_id}) → ${JSON.stringify(r.data ?? r.error)}`);
         } else if (msg.type === "question-reject") {
           const qc = client.question?.reject ? client : await questionClient();
           const r = await qc.question.reject({
@@ -168,6 +175,43 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
   // scope (not inside `event`) so it persists across event invocations.
   const pendingAsked = new Map(); // permissionID → timeout handle
 
+  // Session-done alerts: a turn that ran >= DONE_MIN_SECS and went idle sends
+  // the final assistant text to the phone. busySince/lastDone are per session.
+  const DONE_MIN_SECS = Number(process.env.HOOKLINE_DONE_MIN_SECS ?? 60);
+  const busySince = new Map();
+  const lastDone = new Map();
+  const sessionIdOf = (p) => p?.sessionID ?? p?.data?.sessionID ?? null;
+
+  const onBusy = (sessionID) => {
+    if (!busySince.has(sessionID)) busySince.set(sessionID, Date.now());
+    // new turn started (typed locally or injected): cancels a pending done alert
+    try {
+      appendFileSync(join(DATA_DIR, `opencode-turn-${sessionID}`), "\n");
+    } catch {}
+  };
+
+  const onIdle = async (sessionID, spawnDone) => {
+    const since = busySince.get(sessionID);
+    busySince.delete(sessionID);
+    if (!since || Date.now() - since < DONE_MIN_SECS * 1000) return;
+    if (Date.now() - (lastDone.get(sessionID) ?? 0) < 5000) return; // idle + status.idle dupes
+    lastDone.set(sessionID, Date.now());
+    try {
+      const sess = await client.session.get({ path: { id: sessionID } });
+      if (sess.data?.parentID) return; // subagent session
+      const msgs = await client.session.messages({ path: { id: sessionID } });
+      const last = (msgs.data ?? []).filter((m) => m.info?.role === "assistant").pop();
+      const text = (last?.parts ?? [])
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+      spawnDone({ hookline_event: "done", sessionID, text });
+    } catch (e) {
+      logLine(`done alert failed: ${String(e).slice(0, 300)}`);
+    }
+  };
+
   return {
     dispose: async () => {
       try {
@@ -214,6 +258,16 @@ export const Hookline = async ({ client, serverUrl, directory }) => {
       // wait 3s and check whether a matching permission.replied already landed.
       // Keyed by permission ID so concurrent asks don't cancel each other.
       // (pendingAsked Map lives in plugin scope — see above.)
+
+      if (event.type === "session.status") {
+        const sid = sessionIdOf(event.properties);
+        const st = event.properties?.status?.type ?? event.properties?.data?.status?.type;
+        if (sid && st === "busy") onBusy(sid);
+        else if (sid && st === "idle") await onIdle(sid, spawnHook);
+      } else if (event.type === "session.idle") {
+        const sid = sessionIdOf(event.properties);
+        if (sid) await onIdle(sid, spawnHook);
+      }
 
       if (
         event.type === "permission.asked" ||

@@ -28,6 +28,20 @@ adapter_normalize() {
   ADAPTER_ACTIONS=""
   ADAPTER_NO_ACTIONS=""
   ADAPTER_OPTIONS=""
+  ADAPTER_FREE_TEXT=false
+  IS_DONE=""
+  if [ "$(echo "$INPUT" | jq -r '.hookline_event // empty' 2>/dev/null)" = "done" ]; then
+    # session-done payload (plugin on session idle): summary text, no prompt
+    [ "${HOOKLINE_DONE_ALERTS:-1}" = "0" ] && exit 0
+    IS_DONE=1
+    TOOL_NAME="Done"
+    TOOL_INPUT=""
+    CWD="${HOOKLINE_OPC_CWD:-$PWD}"
+    TRANSCRIPT_PATH=""
+    SESSION_ID=$(echo "$INPUT" | jq -r '.sessionID // empty')
+    PERMISSION_ID=""
+    return 0
+  fi
   if echo "$INPUT" | jq -e '.questions | type == "array" and length > 0' >/dev/null 2>&1; then
     # question dialog payload (question.asked) — no permission/matcher fields
     IS_QUESTION=1
@@ -82,7 +96,9 @@ adapter_emit_decision() {
 }
 
 adapter_emit_initial_decision() {
-  if [ -n "${IS_QUESTION:-}" ]; then
+  if [ -n "${IS_DONE:-}" ]; then
+    log "OUTPUT: session done (opencode idle, phone flow starting)"
+  elif [ -n "${IS_QUESTION:-}" ]; then
     log "OUTPUT: question active (opencode question dialog, phone flow starting)"
   else
     log "OUTPUT: prompt active (opencode native permission prompt, phone flow starting)"
@@ -90,6 +106,18 @@ adapter_emit_initial_decision() {
 }
 
 adapter_build_message() {
+  if [ -n "${IS_DONE:-}" ]; then
+    # Summary tail (the wrap-up is at the end) inside the ntfy body budget.
+    local _txt budget=1300
+    [ -n "$ALERT_HEADER" ] && budget=$(( budget - ${#ALERT_HEADER} - 2 ))
+    _txt=$(echo "$INPUT" | jq -r '.text // ""' 2>/dev/null)
+    [ "${#_txt}" -gt "$budget" ] && _txt="…${_txt: -$budget}"
+    NOTIFY_MSG="${_txt:-Session finished.}"$'\n\n'"Reply go to continue, or do <instruction>"
+    ADAPTER_OPTIONS='["Continue"]'
+    ADAPTER_ACTIONS='[{"label":"Continue","payload":"answer|Continue"}]'
+    ADAPTER_FREE_TEXT=true
+    return 0
+  fi
   if [ -n "${IS_QUESTION:-}" ]; then
     build_question_message
     return 0
@@ -111,8 +139,10 @@ adapter_build_message() {
 # Always echoes a number: an unreadable/absent file must not break core's
 # numeric -gt comparisons (empty string makes `[ ... -gt ... ]` error out).
 adapter_progress_lines() {
-  local n
-  n=$(wc -l < "${HOME}/.local/share/hookline/opencode-answered-${SESSION_ID}" 2>/dev/null | tr -d ' ')
+  local n f="opencode-answered-${SESSION_ID}"
+  # done alerts watch for a new turn (plugin appends on session busy)
+  [ -n "${IS_DONE:-}" ] && f="opencode-turn-${SESSION_ID}"
+  n=$(wc -l < "${HOME}/.local/share/hookline/$f" 2>/dev/null | tr -d ' ')
   echo "${n:-0}"
 }
 
@@ -121,7 +151,20 @@ adapter_progress_lines() {
 # over plain TCP (curl gets ECONNREFUSED), only the plugin's client can answer.
 adapter_inject() {
   local action="$1" label="$2" payload
-  if [ -n "${IS_QUESTION:-}" ]; then
+  if [ -n "${IS_DONE:-}" ]; then
+    case "$action" in
+      answer)
+        [ "$label" = "Continue" ] && label="Continue with the next step you would suggest (check ROADMAP.md if unsure)."
+        log "background: routing continue prompt to plugin bridge"
+        payload=$(jq -nc --arg sid "$SESSION_ID" --arg t "$label" \
+          '{type:"prompt",session_id:$sid,text:$t}' 2>/dev/null)
+        ;;
+      *)
+        log "background: ignoring '$action' for session-done alert"
+        return 0
+        ;;
+    esac
+  elif [ -n "${IS_QUESTION:-}" ]; then
     case "$action" in
       answer)
         log "background: routing question answer '$label' ($PERMISSION_ID) to plugin bridge"
@@ -149,7 +192,7 @@ adapter_inject() {
     payload=$(jq -nc --arg r "$response" --arg sid "$SESSION_ID" --arg pid "$PERMISSION_ID" \
       '{response:$r,session_id:$sid,permission_id:$pid}' 2>/dev/null)
   fi
-  if [ -z "${HOOKLINE_OPC_REPLY_SOCK:-}" ] || [ -z "$SESSION_ID" ] || [ -z "$PERMISSION_ID" ]; then
+  if [ -z "${HOOKLINE_OPC_REPLY_SOCK:-}" ] || [ -z "$SESSION_ID" ] || { [ -z "$PERMISSION_ID" ] && [ -z "${IS_DONE:-}" ]; }; then
     log "background: cannot reply — missing reply socket/session/request id"
     return 0
   fi

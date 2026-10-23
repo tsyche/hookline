@@ -43,7 +43,12 @@ SSE_READ_TIMEOUT = 300
 # invalid-reply feedback. The one spaced form allowed is "snooze <minutes>";
 # any other multi-char body with spaces/punctuation is our own notification
 # echo — never parsed as decision.
-TYPED_REPLY_RE = re.compile(r'^(?:[0-9A-Za-z]{1,12}|snooze [0-9]{1,4})$')
+# "do <instruction>" is the free-text form for session-done prompts (applied
+# only when such a prompt is pending; elsewhere it gets the usual no-match).
+TYPED_REPLY_RE = re.compile(
+    r'^(?:[0-9A-Za-z]{1,12}|snooze [0-9]{1,4}|do .{1,500})$', re.S)
+# Words that mean "continue" on a session-done prompt (option 1 also works)
+DONE_GO_WORDS = ('go', 'continue', 'yes', 'y', 'ok')
 
 
 # ── snooze ────────────────────────────────────────────────────────────────────
@@ -287,6 +292,8 @@ class Daemon:
         # req_id → option labels for single-select questions, so a typed
         # response-topic reply ("4" / "D") can map back to a label
         self.question_options = {}
+        # req_ids of session-done prompts: accept "go" words and "do <text>"
+        self.free_text = set()
         # disambiguation state for bare replies with 2+ prompts pending:
         # pick_req = prompt chosen by an earlier "1"/"2" reply; queued =
         # (text, low) waiting to apply once a prompt is picked
@@ -483,6 +490,14 @@ class Daemon:
                 return False
             is_question = req_id in self.question_options
             options = list(self.question_options.get(req_id, []))
+            is_done = req_id in self.free_text
+        if is_done:
+            if low.startswith('do ') and text[3:].strip():
+                self.handle_response(req_id, f"answer|{text[3:].strip()}")
+                return True
+            if low in DONE_GO_WORDS:
+                self.handle_response(req_id, f"answer|{options[0]}")
+                return True
         if low in ('allow', 'deny', 'retry'):
             if low == 'allow' and is_question:
                 self._invalid_reply(req_id, text, options)
@@ -613,6 +628,14 @@ class Daemon:
         n = len(options)
         if n <= 0:
             return
+        if req_id in self.free_text:
+            body = (f"'{text[:60]}' not understood.\n"
+                    "Reply go, or do <instruction>.")
+            if header:
+                body = header + "\n\n" + body
+            self.send_ntfy(load_config(), f"{title} — invalid reply", body,
+                           req_id, actions=[])
+            return
         hint = f"1-{n}"
         if n <= 26:
             hint += f" (or A-{chr(ord('A') + n - 1)})"
@@ -729,6 +752,7 @@ class Daemon:
         if not session_id:
             with self.lock:
                 self.question_options.pop(req_id, None)
+                self.free_text.discard(req_id)
             self.log.info(f"[{req_id[:16]}] unknown req_id, ignoring")
             return
         with self.lock:
@@ -771,6 +795,7 @@ class Daemon:
             with self.lock:
                 self.pending.pop(req_id, None)
                 self.question_options.pop(req_id, None)
+                self.free_text.discard(req_id)
 
         elif decision.startswith('answer|'):
             # Question-dialog option (tap or typed reply): claude/other
@@ -801,6 +826,7 @@ class Daemon:
             with self.lock:
                 self.pending.pop(req_id, None)
                 self.question_options.pop(req_id, None)
+                self.free_text.discard(req_id)
 
         elif decision == 'retry':
             # Tell hook to resend — it controls retry count
@@ -808,6 +834,7 @@ class Daemon:
             with self.lock:
                 self.pending.pop(req_id, None)
                 self.question_options.pop(req_id, None)
+                self.free_text.discard(req_id)
 
     def _write_response(self, response_file, decision):
         if not response_file:
@@ -844,9 +871,12 @@ class Daemon:
                 self.log.info(f"[{old_req[:16]}] superseded, cancelling")
                 del self.pending[old_req]
                 self.question_options.pop(old_req, None)
+                self.free_text.discard(old_req)
             self.pending[req_id] = session_id
             if options:
                 self.question_options[req_id] = options
+            if msg.get('free_text'):
+                self.free_text.add(req_id)
             sess = self.sessions.setdefault(session_id, {})
             sess.update({
                 'notify_title':   title,
@@ -905,6 +935,7 @@ class Daemon:
                 with self.lock:
                     self.pending.pop(req_id, None)
                     self.question_options.pop(req_id, None)
+                    self.free_text.discard(req_id)
                 self.log.info(f"[{req_id[:16]}] cancelled by hook")
                 conn.sendall(b'ok')
 

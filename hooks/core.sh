@@ -480,7 +480,8 @@ core_main() {
           --argjson actions "${ADAPTER_ACTIONS:-[]}" \
           --argjson options "${ADAPTER_OPTIONS:-[]}" \
           --argjson no_actions "$notify_no_actions" \
-          '{type:$type,session_id:$session_id,req_id:$req_id,title:$title,message:$message,response_file:$response_file,max_retries:$max_retries,actions:$actions,options:$options,no_actions:$no_actions}')"
+          --argjson free_text "${ADAPTER_FREE_TEXT:-false}" \
+          '{type:$type,session_id:$session_id,req_id:$req_id,title:$title,message:$message,response_file:$response_file,max_retries:$max_retries,actions:$actions,options:$options,no_actions:$no_actions,free_text:$free_text}')"
 
         # Poll for daemon's response, checking transcript in parallel
         decision=""
