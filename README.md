@@ -227,12 +227,12 @@ HOOKLINE_PROVIDERS="claude codex opencode grok"    # provider registry; unset = 
 HOOKLINE_ALERT_HEADER=1                # body metadata line (project · branch · dir); 0 = title tag only
 HOOKLINE_CONTEXT_TIMEOUT=45            # seconds a typed `context` summary may take
 HOOKLINE_DONE_ALERTS=1                 # opencode session-done alerts; 0 = off
-HOOKLINE_DONE_MIN_SECS=60              # opencode: min turn length before a done alert (plugin env)
+HOOKLINE_DONE_MIN_SECS=60              # min turn length before a done alert (codex: config; opencode: plugin env)
 ```
 
-### Session-done alerts (opencode)
+### Session-done alerts (opencode, codex)
 
-When an opencode turn runs longer than `HOOKLINE_DONE_MIN_SECS` and goes idle, the plugin sends the agent's final message to your phone (same grace period and away detection as prompts, so nothing fires if you answer at the terminal). Reply `go` (or tap **Continue**) to send "continue with the next step you would suggest", or `do <instruction>` to send your own prompt. Subagent sessions are skipped. Other providers: not yet.
+When an opencode turn runs longer than `HOOKLINE_DONE_MIN_SECS` and goes idle, the plugin sends the agent's final message to your phone (same grace period and away detection as prompts, so nothing fires if you answer at the terminal). Reply `go` (or tap **Continue**) to send "continue with the next step you would suggest", or `do <instruction>` to send your own prompt. Subagent sessions are skipped. Codex uses its `Stop` hook (registered by `just install`; re-review it once in `/hooks`) and types the reply into the codex prompt via tmux or the frontmost app. Claude: not planned (the mobile app covers it).
 
 Changes take effect immediately — no reinstall needed. `hookline setup` walks through
 all of it (transport, topic, subscription QR, tmux check, live test) without editing

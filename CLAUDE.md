@@ -32,7 +32,9 @@ See [README.md](README.md) for full usage and [ROADMAP.md](ROADMAP.md) for plann
   claude-hardcoded), frontmost-app osascript otherwise (claude's bare-terminal path).
   Response-only (`ADAPTER_RESPONSE_ONLY=1`); local-answer signal = session rollout JSONL
   growth. Registered by merging `~/.codex/hooks.json` (foreign hooks preserved; one-time
-  `/hooks` trust review).
+  `/hooks` trust review). Also a `Stop` entry (no matcher) for session-done alerts: gated on
+  the rollout's last `task_started` age ≥ `HOOKLINE_DONE_MIN_SECS`, subagent/re-entrant stops
+  skipped; `go` / `do <text>` types the prompt into the composer (tmux `send-keys -l` or osascript).
 - **grok adapter** (`hooks/adapters/grok.sh`) — Bash. Rides grok's claude-compatible
   `PreToolUse` hooks: `install.sh` merges a `hookline.json` entry into `~/.grok/hooks/`
   (global hooks are always trusted; foreign hooks preserved); `ask` forces grok's own

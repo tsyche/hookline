@@ -303,17 +303,21 @@ if [ -d "$CODEX_DIR" ]; then
     printf '%s\n' '{"hooks":{}}' > "$CODEX_HOOKS"
   fi
   hook_cmd="[ -x \"\$HOME/.local/share/hookline/hooks/hookline.sh\" ] && \"\$HOME/.local/share/hookline/hooks/hookline.sh\" codex || true"
-  if jq -e --arg cmd "$hook_cmd" '.hooks.PermissionRequest[]?.hooks[]? | select(.command? == $cmd)' "$CODEX_HOOKS" &>/dev/null; then
-    echo "Hook already registered in $CODEX_HOOKS (provider: codex)"
-  else
-    jq --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
-      .hooks //= {} |
-      .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) +
-        [{matcher: $matcher, hooks: [{type: "command", command: $cmd, timeout: 30}]}])
-    ' "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
-    echo "Hook registered in $CODEX_HOOKS (provider: codex)"
-    echo "Review it once inside codex (/hooks) — codex skips untrusted hooks until then."
-  fi
+  # PermissionRequest (approvals) + Stop (session-done alerts; no matcher)
+  for ev in PermissionRequest Stop; do
+    if jq -e --arg ev "$ev" --arg cmd "$hook_cmd" '.hooks[$ev][]?.hooks[]? | select(.command? == $cmd)' "$CODEX_HOOKS" &>/dev/null; then
+      echo "Hook already registered in $CODEX_HOOKS (provider: codex, $ev)"
+    else
+      jq --arg ev "$ev" --arg cmd "$hook_cmd" --arg matcher "$ADAPTER_MATCHER" '
+        .hooks //= {} |
+        .hooks[$ev] = ((.hooks[$ev] // []) +
+          [({matcher: $matcher} | if $ev == "Stop" then del(.matcher) else . end)
+            + {hooks: [{type: "command", command: $cmd, timeout: 30}]}])
+      ' "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
+      echo "Hook registered in $CODEX_HOOKS (provider: codex, $ev)"
+      echo "Review it once inside codex (/hooks) — codex skips untrusted hooks until then."
+    fi
+  done
 fi
 
 # grok: write a global PreToolUse entry into ~/.grok/hooks/hookline.json —

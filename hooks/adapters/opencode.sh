@@ -107,15 +107,7 @@ adapter_emit_initial_decision() {
 
 adapter_build_message() {
   if [ -n "${IS_DONE:-}" ]; then
-    # Summary tail (the wrap-up is at the end) inside the ntfy body budget.
-    local _txt budget=1300
-    [ -n "$ALERT_HEADER" ] && budget=$(( budget - ${#ALERT_HEADER} - 2 ))
-    _txt=$(echo "$INPUT" | jq -r '.text // ""' 2>/dev/null)
-    [ "${#_txt}" -gt "$budget" ] && _txt="…${_txt: -$budget}"
-    NOTIFY_MSG="${_txt:-Session finished.}"$'\n\n'"Reply go to continue, or do <instruction>"
-    ADAPTER_OPTIONS='["Continue"]'
-    ADAPTER_ACTIONS='[{"label":"Continue","payload":"answer|Continue"}]'
-    ADAPTER_FREE_TEXT=true
+    build_done_message "$(echo "$INPUT" | jq -r '.text // ""' 2>/dev/null)"
     return 0
   fi
   if [ -n "${IS_QUESTION:-}" ]; then
@@ -154,7 +146,7 @@ adapter_inject() {
   if [ -n "${IS_DONE:-}" ]; then
     case "$action" in
       answer)
-        [ "$label" = "Continue" ] && label="Continue with the next step you would suggest (check ROADMAP.md if unsure)."
+        [ "$label" = "Continue" ] && label="$DONE_CONTINUE_TEXT"
         log "background: routing continue prompt to plugin bridge"
         payload=$(jq -nc --arg sid "$SESSION_ID" --arg t "$label" \
           '{type:"prompt",session_id:$sid,text:$t}' 2>/dev/null)

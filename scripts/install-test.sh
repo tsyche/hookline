@@ -152,6 +152,10 @@ codex_count() { # <hooks.json> -> number of hookline PermissionRequest commands
   jq '[.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$1"
 }
 
+codex_stop_count() { # <hooks.json> -> number of hookline Stop commands
+  jq '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains("hookline"))] | length' "$1"
+}
+
 codex_foreign_count() { # <hooks.json> -> foreign SessionStart hooks that must survive
   jq '[.hooks.SessionStart[]?.hooks[]? | select((.command // "") | contains("foreign-hook"))] | length' "$1"
 }
@@ -193,6 +197,8 @@ contains "registered-blackbox" "$(hookline_count "$SETTINGS_BB")" "1"
 contains "other-hook-kept" "$(other_hook_count "$SETTINGS")" "1"
 contains "registered-codex" "$(codex_count "$CODEX_HOOKS")" "1"
 contains "codex-foreign-hook-kept" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
+contains "registered-codex-stop" "$(codex_stop_count "$CODEX_HOOKS")" "1"
+contains "codex-stop-has-no-matcher" "$(jq -r '.hooks.Stop[0] | has("matcher")' "$CODEX_HOOKS")" "false"
 contains "codex-matcher-set" "$(jq -r '.hooks.PermissionRequest[0].matcher' "$CODEX_HOOKS")" "Bash|apply_patch|mcp__.*"
 contains "install-mentions-codex-trust" "$out" "codex (/hooks)"
 contains "registered-grok" "$(grok_count "$GROK_HOOKS")" "1"
@@ -207,6 +213,7 @@ rc=$?
 expect_rc "reinstall" "$rc"
 contains "reinstall-already-registered" "$out" "already registered"
 contains "reinstall-single-registration" "$(hookline_count "$SETTINGS")" "1"
+contains "reinstall-single-codex-stop" "$(codex_stop_count "$CODEX_HOOKS")" "1"
 contains "reinstall-single-codex-registration" "$(codex_count "$CODEX_HOOKS")" "1"
 contains "reinstall-single-grok-registration" "$(grok_count "$GROK_HOOKS")" "1"
 contains "reinstall-topic-unchanged" "$(cat "$CONFIG")" 'HOOKLINE_TOPIC="install-test-topic"'
@@ -224,6 +231,7 @@ not_exists "plugin-removed" "$PLUGIN_DST"
 not_exists "version-removed" "$H/.local/share/hookline/VERSION"
 contains "claude-registration-removed" "$(hookline_count "$SETTINGS")" "0"
 contains "blackbox-registration-removed" "$(hookline_count "$SETTINGS_BB")" "0"
+contains "codex-stop-removed" "$(codex_stop_count "$CODEX_HOOKS")" "0"
 contains "codex-registration-removed" "$(codex_count "$CODEX_HOOKS")" "0"
 contains "codex-foreign-hook-survives" "$(codex_foreign_count "$CODEX_HOOKS")" "1"
 expect_eq "hooks-json-roundtrip-codex" "$seed_cx" "$(jq -S . "$CODEX_HOOKS")"

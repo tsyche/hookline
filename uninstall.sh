@@ -102,14 +102,16 @@ if [ -f "$OPC_PLUGIN" ]; then
 fi
 
 # Remove the codex registration (inverse of install.sh's merge — only the
-# hookline PermissionRequest entries; every other hook in the file survives).
+# hookline PermissionRequest/Stop entries; every other hook in the file survives).
 CODEX_HOOKS="${HOME}/.codex/hooks.json"
 if [ -f "$CODEX_HOOKS" ] && \
-   jq -e '.hooks.PermissionRequest[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$CODEX_HOOKS" &>/dev/null; then
+   jq -e '.hooks | to_entries[]? | .value[]?.hooks[]? | select((.command // "") | contains("hookline"))' "$CODEX_HOOKS" &>/dev/null; then
   jq '.hooks //= {} |
-      .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) |
-        map(select([.hooks[]?.command // ""] | any(contains("hookline")) | not))) |
-      if (.hooks.PermissionRequest | length) == 0 then del(.hooks.PermissionRequest) else . end' \
+      reduce ("PermissionRequest", "Stop") as $ev (.;
+        if .hooks[$ev] then
+          .hooks[$ev] |= map(select([.hooks[]?.command // ""] | any(contains("hookline")) | not))
+          | if (.hooks[$ev] | length) == 0 then del(.hooks[$ev]) else . end
+        else . end)' \
     "$CODEX_HOOKS" > "${CODEX_HOOKS}.tmp" && mv "${CODEX_HOOKS}.tmp" "$CODEX_HOOKS"
   echo "Hook removed from $CODEX_HOOKS"
 fi

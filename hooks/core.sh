@@ -23,6 +23,21 @@
 PYBIN="/usr/bin/python3"
 [ -x "$PYBIN" ] || PYBIN="$(command -v python3)"
 
+# Prompt sent when a session-done alert is answered with 'go' / Continue.
+DONE_CONTINUE_TEXT="Continue with the next step you would suggest (check ROADMAP.md if unsure)."
+
+# Session-done alert body/buttons, shared by adapters. $1 = the agent's final
+# message; the tail rides (the wrap-up is at the end) inside the ntfy budget.
+build_done_message() {
+  local txt="$1" budget=1300
+  [ -n "$ALERT_HEADER" ] && budget=$(( budget - ${#ALERT_HEADER} - 2 ))
+  [ "${#txt}" -gt "$budget" ] && txt="…${txt: -$budget}"
+  NOTIFY_MSG="${txt:-Session finished.}"$'\n\n'"Reply go to continue, or do <instruction>"
+  ADAPTER_OPTIONS='["Continue"]'
+  ADAPTER_ACTIONS='[{"label":"Continue","payload":"answer|Continue"}]'
+  ADAPTER_FREE_TEXT=true
+}
+
 log() {
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${REQ_ID:-init}" "$*" >> "$LOG_FILE"
 }

@@ -538,6 +538,25 @@ run_case_log "codex-progress-raw-rollout" codex \
   "baseline transcript lines: 3" has "$CX_PATCH" "" ""
 rm -rf "$CX_FIXTURE_DIR"
 
+# ── codex Stop (session-done alert): the rollout's last task_started timestamp
+#    gates on turn length; subagent stops are ignored ──
+CX_FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
+printf '%s\n' '{"timestamp":"2020-01-01T00:00:00.000Z","type":"event_msg","payload":{"type":"task_started"}}' > "$CX_FIXTURE_DIR/long.jsonl"
+printf '%s\n' "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%S).000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}" > "$CX_FIXTURE_DIR/short.jsonl"
+cx_stop() { # <rollout> [extra jq object]
+  jq -nc --arg tp "$1" '{hook_event_name:"Stop",cwd:"/tmp",session_id:"golden-cx3",transcript_path:$tp,stop_hook_active:false,last_assistant_message:"Phase 2 shipped. Next: retries."}' \
+    | jq -c ". + ${2:-{\}}"
+}
+run_case_log "codex-stop-long-turn" codex "OUTPUT: session done" has "$(cx_stop "$CX_FIXTURE_DIR/long.jsonl")"
+run_case_log "codex-stop-short-turn-silent" codex "OUTPUT: session done" hasnt "$(cx_stop "$CX_FIXTURE_DIR/short.jsonl")"
+run_case_log "codex-stop-subagent-silent" codex "OUTPUT: session done" hasnt \
+  "$(cx_stop "$CX_FIXTURE_DIR/long.jsonl" '{"agent_transcript_path":"/x"}')"
+run_case_notify_payload "codex-stop-notify-free-text" codex "$(cx_stop "$CX_FIXTURE_DIR/long.jsonl")" \
+  '.free_text == true and .options == ["Continue"]
+   and (.title | endswith("] Done"))
+   and (.message | contains("Phase 2 shipped") and contains("do <instruction>"))'
+rm -rf "$CX_FIXTURE_DIR"
+
 # ── claude progress counter: transcript metadata lines are not local answers ──
 FIXTURE_DIR=$(mktemp -d /tmp/hookline-golden.XXXXXX)
 CLAUDE_TRANSCRIPT="$FIXTURE_DIR/transcript.jsonl"
